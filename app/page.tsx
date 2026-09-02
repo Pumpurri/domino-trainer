@@ -22,6 +22,9 @@ type RoundResult = {
 };
 type DrawResult = { choice: 'high' | 'low'; tiles: Tile[]; starter: number };
 type LastAction = { kind: 'play' | 'pass'; player: number; tileId?: string; text: string };
+type PublicEvent =
+  | { kind: 'play'; player: number; tile: Tile; side: Side; endsBefore: [number | null, number | null]; nextVoids: number[] }
+  | { kind: 'pass'; player: number; endsBefore: [number | null, number | null] };
 type Game = {
   phase: Phase;
   scores: number[];
@@ -36,6 +39,7 @@ type Game = {
   starterDraw: DrawResult | null;
   history: string[];
   lastAction: LastAction | null;
+  events: PublicEvent[];
 };
 type Coach =
   | { kind: 'intro' }
@@ -43,7 +47,10 @@ type Coach =
   | { kind: 'watching'; message: string }
   | { kind: 'hint'; title: string; body: string; confidence: string }
   | { kind: 'feedback'; rating: string; title: string; body: string; stat: string; tone: 'great' | 'okay' | 'mistake' };
-type RatedMove = Move & { wins: number; samples: number; winRate: number; heuristic: number };
+type RatedMove = Move & { samples: number; effectiveSamples: number; winRate: number; margin: number; heuristic: number };
+type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
+type PlayerBelief = { player: number; certainOut: number[]; softReads: SoftRead[] };
+type WeightedSample = { hands: Tile[][]; weight: number };
 
 const names = ['You', 'Rosa', 'Tino'];
 const dotMap: Record<number, number[]> = {
@@ -78,7 +85,7 @@ function initialGame(): Game {
   return {
     phase: 'pickStarter', scores: [0, 0, 0], round: 1, hands: [[], [], []], chain: [],
     current: 0, starter: 0, voids: [new Set(), new Set(), new Set()], consecutivePasses: 0,
-    result: null, starterDraw: null, history: [], lastAction: null,
+    result: null, starterDraw: null, history: [], lastAction: null, events: [],
   };
 }
 
@@ -100,7 +107,7 @@ function dealRound(game: Game, starter: number): Game {
   return {
     ...game, phase: 'playing', hands, chain: [], current: starter, starter,
     voids: [new Set(), new Set(), new Set()], consecutivePasses: 0, result: null,
-    history: [`${names[starter]} opened round ${game.round}.`], lastAction: null,
+    history: [`${names[starter]} opened round ${game.round}.`], lastAction: null, events: [],
   };
 }
 
@@ -152,6 +159,7 @@ function finishRound(game: Game, winner: number | null, reason: 'empty' | 'block
 
 function applyMove(game: Game, move: Move): Game {
   const player = game.current;
+  const endsBefore = endsOf(game.chain);
   const hands = game.hands.map((hand, index) => index === player ? hand.filter((tile) => tile.id !== move.tile.id) : hand);
   const placed: PlacedTile = { ...move.tile, left: move.placedLeft, right: move.placedRight, player };
   const chain = game.chain.length === 0 ? [placed] : move.side === 'left' ? [placed, ...game.chain] : [...game.chain, placed];
@@ -159,6 +167,7 @@ function applyMove(game: Game, move: Move): Game {
     ...game, hands, chain, current: (player + 1) % 3, consecutivePasses: 0,
     history: [...game.history, `${names[player]} played ${describeMove(move, game.chain.length)}.`],
     lastAction: { kind: 'play', player, tileId: move.tile.id, text: `${names[player]} played ${move.tile.a}–${move.tile.b}` },
+    events: [...game.events, { kind: 'play', player, tile: move.tile, side: move.side, endsBefore, nextVoids: [...game.voids[(player + 1) % 3]] }],
   };
   return hands[player].length === 0 ? finishRound(next, player, 'empty') : next;
 }
@@ -173,6 +182,7 @@ function applyPass(game: Game): Game {
     ...game, voids, current: (player + 1) % 3, consecutivePasses: game.consecutivePasses + 1,
     history: [...game.history, `${names[player]} passed on ${left} and ${right}.`],
     lastAction: { kind: 'pass', player, text: `${names[player]} passed on ${left} and ${right}` },
+    events: [...game.events, { kind: 'pass', player, endsBefore: [left, right] }],
   };
   if (passed.consecutivePasses < 3) return passed;
   const pips = passed.hands.map(pipTotal);
@@ -226,6 +236,92 @@ function sampleOpponentHands(game: Game, random: () => number): Tile[][] | null 
   return null;
 }
 
+function chainFromEnds(ends: [number | null, number | null]): PlacedTile[] {
+  const [left, right] = ends;
+  if (left === null || right === null) return [];
+  return [{ id: `belief-${left}-${right}`, a: left, b: right, left, right, player: -1 }];
+}
+
+function choiceLikelihood(game: Game, sampledHands: Tile[][]): number {
+  let logLikelihood = 0;
+
+  game.events.forEach((event, eventIndex) => {
+    if (event.kind !== 'play' || event.player === 0 || event.endsBefore[0] === null) return;
+    const reconstructed = new Map(sampledHands[event.player].map((tile) => [tile.id, tile]));
+    for (let futureIndex = eventIndex; futureIndex < game.events.length; futureIndex += 1) {
+      const future = game.events[futureIndex];
+      if (future.kind === 'play' && future.player === event.player) reconstructed.set(future.tile.id, future.tile);
+    }
+
+    const legal = legalMovesFor([...reconstructed.values()], chainFromEnds(event.endsBefore));
+    if (legal.length <= 1) return;
+    const observed = legal.find((move) => move.tile.id === event.tile.id && move.side === event.side)
+      ?? legal.find((move) => move.tile.id === event.tile.id);
+    if (!observed) return;
+
+    const scores = legal.map((move) => moveHeuristic(move, [...reconstructed.values()], new Set(event.nextVoids)));
+    const maximum = Math.max(...scores);
+    const weights = scores.map((score) => Math.exp((score - maximum) / 2.5));
+    const observedIndex = legal.indexOf(observed);
+    const strategicProbability = weights[observedIndex] / weights.reduce((sum, weight) => sum + weight, 0);
+    const humanProbability = 0.35 / legal.length + 0.65 * strategicProbability;
+    logLikelihood += Math.log(Math.max(humanProbability, 0.01));
+  });
+
+  return Math.exp(Math.max(-9, logLikelihood * 0.42));
+}
+
+function estimateBeliefs(game: Game): PlayerBelief[] {
+  const random = seededRandom(`beliefs|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`);
+  const samples: WeightedSample[] = [];
+  for (let index = 0; index < 320; index += 1) {
+    const hands = sampleOpponentHands(game, random);
+    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands) });
+  }
+
+  return [1, 2].map((player) => {
+    const certainOut = [...game.voids[player]].sort((a, b) => a - b);
+    const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
+    const prior = Array.from({ length: 10 }, (_, value) => samples.length
+      ? samples.filter((sample) => sample.hands[player].some((tile) => tile.a === value || tile.b === value)).length / samples.length
+      : 0);
+    const posterior = Array.from({ length: 10 }, (_, value) => totalWeight
+      ? samples.reduce((sum, sample) => sum + (sample.hands[player].some((tile) => tile.a === value || tile.b === value) ? sample.weight : 0), 0) / totalWeight
+      : 0);
+
+    const avoided = new Map<number, number>();
+    game.events.forEach((event) => {
+      if (event.kind !== 'play' || event.player !== player) return;
+      const [left, right] = event.endsBefore;
+      if (left === null || right === null || left === right) return;
+      const unchosenEnd = event.side === 'left' ? right : left;
+      if (event.tile.a === unchosenEnd || event.tile.b === unchosenEnd) return;
+      avoided.set(unchosenEnd, (avoided.get(unchosenEnd) ?? 0) + 1);
+    });
+
+    const softReads: SoftRead[] = [...avoided.entries()]
+      .filter(([value]) => !game.voids[player].has(value))
+      .map(([value, count]) => ({
+        value,
+        direction: 'less' as const,
+        probability: posterior[value],
+        strength: count >= 2 || posterior[value] < prior[value] - 0.1 ? 'moderate' as const : 'weak' as const,
+      }))
+      .sort((a, b) => (b.strength === 'moderate' ? 1 : 0) - (a.strength === 'moderate' ? 1 : 0))
+      .slice(0, 2);
+
+    const strongerSignal = posterior
+      .map((probability, value) => ({ value, probability, change: probability - prior[value] }))
+      .filter(({ value, change }) => !game.voids[player].has(value) && !avoided.has(value) && change >= 0.12)
+      .sort((a, b) => b.change - a.change)[0];
+    if (strongerSignal && softReads.length < 2) {
+      softReads.push({ value: strongerSignal.value, direction: 'more', probability: strongerSignal.probability, strength: 'moderate' });
+    }
+
+    return { player, certainOut, softReads };
+  });
+}
+
 function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], random: () => number): number | null {
   const hands = sampledHands.map((hand) => [...hand]);
   hands[0] = hands[0].filter((tile) => tile.id !== firstMove.tile.id);
@@ -267,18 +363,27 @@ function analyzeMoves(game: Game): RatedMove[] {
   if (!moves.length) return [];
   const stateKey = `${game.round}|${game.chain.map((tile) => tile.id).join(',')}|${game.hands[0].map((tile) => tile.id).join(',')}`;
   const random = seededRandom(stateKey);
-  const samples: Tile[][][] = [];
-  for (let i = 0; i < 120; i += 1) {
-    const sample = sampleOpponentHands(game, random);
-    if (sample) samples.push(sample);
+  const samples: WeightedSample[] = [];
+  for (let i = 0; i < 600; i += 1) {
+    const hands = sampleOpponentHands(game, random);
+    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands) });
   }
 
   return moves.map((move) => {
-    let wins = 0;
-    for (const sample of samples) if (rolloutWinner(game, move, sample, random) === 0) wins += 1;
-    const winRate = samples.length ? wins / samples.length * 100 : 0;
-    return { ...move, wins, samples: samples.length, winRate, heuristic: moveHeuristic(move, game.hands[0], game.voids[1]) };
-  }).sort((a, b) => (b.winRate + b.heuristic * 0.08) - (a.winRate + a.heuristic * 0.08));
+    let weightedWins = 0;
+    let totalWeight = 0;
+    let squaredWeight = 0;
+    for (const sample of samples) {
+      totalWeight += sample.weight;
+      squaredWeight += sample.weight * sample.weight;
+      if (rolloutWinner(game, move, sample.hands, random) === 0) weightedWins += sample.weight;
+    }
+    const winRate = totalWeight ? weightedWins / totalWeight * 100 : 0;
+    const effectiveSamples = squaredWeight ? totalWeight * totalWeight / squaredWeight : 0;
+    const proportion = winRate / 100;
+    const margin = effectiveSamples ? 1.96 * Math.sqrt(proportion * (1 - proportion) / effectiveSamples) * 100 : 100;
+    return { ...move, samples: samples.length, effectiveSamples, winRate, margin, heuristic: moveHeuristic(move, game.hands[0], game.voids[1]) };
+  }).sort((a, b) => b.winRate - a.winRate || b.heuristic - a.heuristic);
 }
 
 function reasonForMove(game: Game, move: Move): string {
@@ -291,7 +396,8 @@ function reasonForMove(game: Game, move: Move): string {
   if (controlled.count >= 2) return `It leaves ${controlled.value} open while you still hold ${controlled.count} ways back into that number, which preserves control.`;
   if (move.tile.a === move.tile.b) return `It safely unloads a double before it becomes stranded late in the round.`;
   if (move.tile.a + move.tile.b >= 13) return `It removes ${move.tile.a + move.tile.b} pips from your hand, reducing the damage if the table blocks.`;
-  return `It keeps the strongest balance between shedding pips, preserving playable numbers, and shaping the next turn.`;
+  const directMatches = remaining.filter((tile) => tile.a === move.newLeft || tile.b === move.newLeft || tile.a === move.newRight || tile.b === move.newRight).length;
+  return `It removes ${move.tile.a + move.tile.b} pips, leaves ${move.newLeft} and ${move.newRight} open, and keeps ${directMatches} tile${directMatches === 1 ? '' : 's'} in your hand that match those ends.`;
 }
 
 function chooseBotMove(game: Game, moves: Move[]): Move {
@@ -329,6 +435,7 @@ export default function Home() {
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
   const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
+  const beliefs = useMemo(() => game.phase === 'playing' ? estimateBeliefs(game) : [], [game]);
 
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
@@ -372,11 +479,19 @@ export default function Home() {
     const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
     const best = ranked[0];
     const gap = best.winRate - chosen.winRate;
-    const tone = gap <= 4 ? 'great' : gap <= 13 ? 'okay' : 'mistake';
-    const rating = gap <= 4 ? 'Best move' : gap <= 13 ? 'Playable' : gap <= 24 ? 'Mistake' : 'Big mistake';
-    const title = gap <= 4 ? `Good read — ${move.tile.a}–${move.tile.b}` : `${best.tile.a}–${best.tile.b} was stronger`;
-    const body = gap <= 4 ? reasonForMove(game, move) : `${reasonForMove(game, best)} Your move was about ${Math.round(gap)} percentage points worse in the simulations.`;
-    const stat = `${Math.round(chosen.winRate)}% win rate · ${chosen.samples} plausible unseen deals`;
+    const sameAsBest = best.tile.id === chosen.tile.id && best.side === chosen.side;
+    const comparison = sameAsBest ? ranked[1] : best;
+    const combinedMargin = comparison ? Math.sqrt(chosen.margin ** 2 + comparison.margin ** 2) : 0;
+    const tooClose = comparison ? Math.abs(chosen.winRate - comparison.winRate) <= Math.max(3, combinedMargin) : false;
+    const tone = sameAsBest || tooClose ? 'great' : gap <= 13 ? 'okay' : 'mistake';
+    const rating = tooClose ? 'Too close to call' : sameAsBest ? 'Best in simulations' : gap <= 13 ? 'Slight miss' : gap <= 24 ? 'Mistake' : 'Big mistake';
+    const title = tooClose ? `${move.tile.a}–${move.tile.b} is in the top group` : sameAsBest ? `Strong simulation result — ${move.tile.a}–${move.tile.b}` : `${best.tile.a}–${best.tile.b} simulated better`;
+    const body = tooClose
+      ? `The model cannot reliably separate this move from ${comparison!.tile.a}–${comparison!.tile.b}; the estimated difference is inside the uncertainty range. ${reasonForMove(game, move)}`
+      : sameAsBest
+        ? reasonForMove(game, move)
+        : `${reasonForMove(game, best)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
+    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} choice-weighted deals`;
     setGame(applyMove(game, move));
     setSelectedId(null);
     setCoach({ kind: 'feedback', rating, title, body, stat, tone });
@@ -392,8 +507,18 @@ export default function Home() {
     const ranked = analyzeMoves(game);
     if (!ranked.length) return;
     const best = ranked[0];
+    const second = ranked[1];
+    const combinedMargin = second ? Math.sqrt(best.margin ** 2 + second.margin ** 2) : 0;
+    const tooClose = second ? best.winRate - second.winRate <= Math.max(3, combinedMargin) : false;
     setSelectedId(best.tile.id);
-    setCoach({ kind: 'hint', title: `Look at the ${best.tile.a}–${best.tile.b}`, body: reasonForMove(game, best), confidence: `${Math.round(best.winRate)}% win rate across ${best.samples} plausible unseen deals` });
+    setCoach({
+      kind: 'hint',
+      title: tooClose
+        ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
+        : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
+      body: `${reasonForMove(game, best)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
+      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} choice-weighted deals`,
+    });
   }
 
   function continueAfterFeedback() {
@@ -409,8 +534,6 @@ export default function Home() {
     setSelectedId(null);
     setCoach(starter === 0 ? { kind: 'turn', message: 'You won the last round, so you open.' } : { kind: 'watching', message: `${names[starter]} won the last round and opens.` });
   }
-
-  const mostRecentPass = [...game.history].reverse().find((line) => line.includes('passed on'));
 
   return (
     <main className="shell">
@@ -486,7 +609,22 @@ export default function Home() {
         <aside className={`coach-panel coach-${coach.kind}`}>
           <div className="coach-heading"><span className="coach-icon">◎</span><div><span className="eyebrow">Mesa coach</span><h2>{coach.kind === 'feedback' ? 'Move review' : 'Read the table'}</h2></div></div>
 
-          {game.phase === 'playing' && mostRecentPass && <div className="read-card"><span className="read-label">Remember this pass</span><p>{mostRecentPass}</p><small>With no drawing, that information stays true for the rest of the round.</small></div>}
+          {game.phase === 'playing' && <div className="read-card belief-card">
+            <span className="read-label">Belief tracker</span>
+            {beliefs.map((belief) => <div className="belief-player" key={belief.player}>
+              <div className="belief-name"><span className={`avatar p${belief.player}`}>{names[belief.player][0]}</span><b>{names[belief.player]}</b></div>
+              <div className="belief-lines">
+                {belief.certainOut.length > 0
+                  ? <p><strong>Certain no:</strong> {belief.certainOut.join(', ')}</p>
+                  : <p><strong>Certain:</strong> nothing yet</p>}
+                {belief.softReads.map((read) => <p className={`soft-read ${read.strength}`} key={`${read.direction}-${read.value}`}>
+                  <strong>{read.strength === 'moderate' ? 'Likely' : 'Weak read'}:</strong> {read.direction === 'less' ? `${read.value} is less likely` : `${read.value} is more likely`} <em>({Math.round(read.probability * 100)}% chance of holding one)</em>
+                </p>)}
+                {belief.softReads.length === 0 && <p><strong>Other values:</strong> unknown</p>}
+              </div>
+            </div>)}
+            <small>Passes create certain facts. Tile choices only shift probabilities; they never prove a player is out.</small>
+          </div>}
 
           {coach.kind === 'intro' && <div className="coach-copy"><span className="eyebrow">Your exact house rules</span><h3>Three players. Ten tiles each. <b>Twenty-five sleep.</b></h3><p>The coach will judge decisions without peeking at the two hidden hands or the sleeping tiles.</p></div>}
           {coach.kind === 'watching' && <div className="coach-copy"><span className="eyebrow">Table update</span><h3>{coach.message}</h3><p>Watch the ends and notice which numbers cause a pass.</p></div>}
@@ -501,7 +639,7 @@ export default function Home() {
           </div>}
           {coach.kind === 'feedback' && game.phase === 'playing' && <button className="play-button continue-button" type="button" onClick={continueAfterFeedback}>Continue <span>→</span></button>}
 
-          <div className="coach-footer"><span>Coach method</span><b><i /> Hidden-tile simulation</b></div>
+          <div className="coach-footer"><span>Coach method</span><b><i /> 600 weighted simulations</b></div>
         </aside>
       </section>
     </main>
