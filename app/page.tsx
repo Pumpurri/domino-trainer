@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 type Tile = { id: string; a: number; b: number };
 type Side = 'left' | 'right';
@@ -458,7 +458,7 @@ export default function Home() {
                   {snakeRows.map((row, rowIndex) => {
                     const direction = rowIndex % 2 === 0 ? 'right' : 'left';
                     const isLast = rowIndex === snakeRows.length - 1;
-                    return <div className={`snake-row toward-${direction}`} key={`row-${rowIndex}`}>
+                    return <div className={`snake-row toward-${direction}`} key={`row-${rowIndex}`} style={{ '--tiles-in-row': row.length } as CSSProperties}>
                       {rowIndex === 0 && leftEnd !== null && <span className="edge-number start-edge">{leftEnd}</span>}
                       {row.map((tile) => <BoardDomino key={tile.id} tile={tile} justPlayed={game.lastAction?.kind === 'play' && game.lastAction.tileId === tile.id} />)}
                       {isLast && rightEnd !== null && <span className="edge-number end-edge">{rightEnd}</span>}

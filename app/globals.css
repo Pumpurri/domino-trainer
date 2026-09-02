@@ -93,8 +93,8 @@ button { font:inherit; }
 .toward-left .snake-bend { left:-16px; border-left:3px solid #e9e1cf; border-radius:13px 0 0 13px; }
 .edge-number { position:absolute; top:50%; width:28px; height:28px; display:grid; place-items:center; transform:translateY(-50%); border:1px solid #ffffff66; border-radius:50%; color:white; background:#082c2770; box-shadow:0 3px 8px #05241f55; font:700 12px/1 Georgia,serif; }
 .start-edge { left:-42px; }
-.toward-right .end-edge { right:-42px; }
-.toward-left .end-edge { left:-42px; }
+.toward-right .end-edge { left:calc(var(--tiles-in-row) * 72px + 10px); right:auto; }
+.toward-left .end-edge { left:auto; right:calc(var(--tiles-in-row) * 72px + 10px); }
 .last-action-note { position:absolute; z-index:4; left:50%; top:67px; transform:translateX(-50%); padding:7px 12px; border:1px solid #ffffff30; border-radius:8px; color:#fff9e9; background:#082c27c9; box-shadow:0 5px 14px #05241f36; font:700 10px/1 Georgia,serif; letter-spacing:.02em; animation:action-arrive .4s ease-out both; }
 .last-action-note.action-pass { color:#ffe1b4; }
 .domino.small.just-played { position:relative; z-index:3; animation:tile-arrive 1.25s ease-out both; box-shadow:inset 0 0 0 2px #f06e4f,inset 2px 2px 2px #fff,0 0 0 4px #f06e4f35,0 7px 13px #061f1b55; }
@@ -148,4 +148,6 @@ button { font:inherit; }
   .snake-stage { inset:96px 42px 12px; }
   .snake-board,.snake-row { width:512px; }
   .snake-row .domino.small { width:64px; flex-basis:64px; }
+  .toward-right .end-edge { left:calc(var(--tiles-in-row) * 64px + 10px); }
+  .toward-left .end-edge { right:calc(var(--tiles-in-row) * 64px + 10px); }
 }
