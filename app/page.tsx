@@ -21,6 +21,7 @@ type RoundResult = {
   matchWinner: number | null;
 };
 type DrawResult = { choice: 'high' | 'low'; tiles: Tile[]; starter: number };
+type LastAction = { kind: 'play' | 'pass'; player: number; tileId?: string; text: string };
 type Game = {
   phase: Phase;
   scores: number[];
@@ -34,6 +35,7 @@ type Game = {
   result: RoundResult | null;
   starterDraw: DrawResult | null;
   history: string[];
+  lastAction: LastAction | null;
 };
 type Coach =
   | { kind: 'intro' }
@@ -76,7 +78,7 @@ function initialGame(): Game {
   return {
     phase: 'pickStarter', scores: [0, 0, 0], round: 1, hands: [[], [], []], chain: [],
     current: 0, starter: 0, voids: [new Set(), new Set(), new Set()], consecutivePasses: 0,
-    result: null, starterDraw: null, history: [],
+    result: null, starterDraw: null, history: [], lastAction: null,
   };
 }
 
@@ -98,7 +100,7 @@ function dealRound(game: Game, starter: number): Game {
   return {
     ...game, phase: 'playing', hands, chain: [], current: starter, starter,
     voids: [new Set(), new Set(), new Set()], consecutivePasses: 0, result: null,
-    history: [`${names[starter]} opened round ${game.round}.`],
+    history: [`${names[starter]} opened round ${game.round}.`], lastAction: null,
   };
 }
 
@@ -156,6 +158,7 @@ function applyMove(game: Game, move: Move): Game {
   const next: Game = {
     ...game, hands, chain, current: (player + 1) % 3, consecutivePasses: 0,
     history: [...game.history, `${names[player]} played ${describeMove(move, game.chain.length)}.`],
+    lastAction: { kind: 'play', player, tileId: move.tile.id, text: `${names[player]} played ${move.tile.a}–${move.tile.b}` },
   };
   return hands[player].length === 0 ? finishRound(next, player, 'empty') : next;
 }
@@ -169,6 +172,7 @@ function applyPass(game: Game): Game {
   const passed: Game = {
     ...game, voids, current: (player + 1) % 3, consecutivePasses: game.consecutivePasses + 1,
     history: [...game.history, `${names[player]} passed on ${left} and ${right}.`],
+    lastAction: { kind: 'pass', player, text: `${names[player]} passed on ${left} and ${right}` },
   };
   if (passed.consecutivePasses < 3) return passed;
   const pips = passed.hands.map(pipTotal);
@@ -295,19 +299,25 @@ function chooseBotMove(game: Game, moves: Move[]): Move {
 }
 
 function Half({ value }: { value: number }) {
-  return <span className="tile-half" aria-label={`${value}`}>{Array.from({ length: 9 }, (_, index) => <i key={index} className={dotMap[value].includes(index) ? 'pip on' : 'pip'} />)}</span>;
+  return <span className={`tile-half value-${value}`} aria-label={`${value}`}>{Array.from({ length: 9 }, (_, index) => <i key={index} className={dotMap[value].includes(index) ? 'pip on' : 'pip'} />)}</span>;
 }
 
-function Domino({ tile, small = false, selected = false, disabled = false, onClick }: { tile: Tile; small?: boolean; selected?: boolean; disabled?: boolean; onClick?: () => void }) {
+function Domino({ tile, small = false, selected = false, disabled = false, justPlayed = false, onClick }: { tile: Tile; small?: boolean; selected?: boolean; disabled?: boolean; justPlayed?: boolean; onClick?: () => void }) {
   return (
-    <button className={`domino ${small ? 'small' : ''} ${selected ? 'selected' : ''} ${disabled ? 'unplayable' : ''}`} aria-label={`Domino ${tile.a}-${tile.b}`} disabled={disabled} onClick={onClick} type="button">
+    <button className={`domino ${small ? 'small' : ''} ${selected ? 'selected' : ''} ${disabled ? 'unplayable' : ''} ${justPlayed ? 'just-played' : ''}`} aria-label={`Domino ${tile.a}-${tile.b}`} disabled={disabled} onClick={onClick} type="button">
       <Half value={tile.a} /><span className="tile-divider" /><Half value={tile.b} />
     </button>
   );
 }
 
-function BoardDomino({ tile }: { tile: PlacedTile }) {
-  return <Domino tile={{ id: tile.id, a: tile.left, b: tile.right }} small disabled />;
+function BoardDomino({ tile, justPlayed }: { tile: PlacedTile; justPlayed: boolean }) {
+  return <Domino tile={{ id: tile.id, a: tile.left, b: tile.right }} small disabled justPlayed={justPlayed} />;
+}
+
+function makeSnakeRows(chain: PlacedTile[], rowSize = 8): PlacedTile[][] {
+  const rows: PlacedTile[][] = [];
+  for (let index = 0; index < chain.length; index += rowSize) rows.push(chain.slice(index, index + rowSize));
+  return rows;
 }
 
 export default function Home() {
@@ -318,6 +328,7 @@ export default function Home() {
   const selectedMoves = legalMoves.filter((move) => move.tile.id === selectedId);
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
+  const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
 
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
@@ -339,7 +350,7 @@ export default function Home() {
           ? { kind: 'turn', message: `${names[player]} played ${move.tile.a}–${move.tile.b}. Your turn.` }
           : { kind: 'watching', message: `${names[player]} played ${move.tile.a}–${move.tile.b}.` });
       }
-    }, 650);
+    }, 1750);
     return () => window.clearTimeout(timer);
   }, [game, coach.kind]);
 
@@ -441,7 +452,21 @@ export default function Home() {
 
             {(game.phase === 'playing' || game.phase === 'roundEnd' || game.phase === 'matchEnd') && <>
               <span className="turn-note">{game.phase === 'playing' ? game.chain.length ? `${names[game.current]} · play on ${leftEnd} or ${rightEnd}` : `${names[game.current]} opens with any tile` : 'Round complete'}</span>
-              <div className="chain-scroller"><div className="chain" aria-label="Domino chain">{leftEnd !== null && <span className="edge-number">{leftEnd}</span>}{game.chain.map((tile, index) => <BoardDomino key={`${tile.id}-${index}`} tile={tile} />)}{rightEnd !== null && <span className="edge-number">{rightEnd}</span>}</div></div>
+              {game.lastAction && <span className={`last-action-note action-${game.lastAction.kind}`} key={`${game.lastAction.text}-${game.history.length}`}>{game.lastAction.text}</span>}
+              <div className="snake-stage">
+                <div className="snake-board" aria-label="Domino chain">
+                  {snakeRows.map((row, rowIndex) => {
+                    const direction = rowIndex % 2 === 0 ? 'right' : 'left';
+                    const isLast = rowIndex === snakeRows.length - 1;
+                    return <div className={`snake-row toward-${direction}`} key={`row-${rowIndex}`}>
+                      {rowIndex === 0 && leftEnd !== null && <span className="edge-number start-edge">{leftEnd}</span>}
+                      {row.map((tile) => <BoardDomino key={tile.id} tile={tile} justPlayed={game.lastAction?.kind === 'play' && game.lastAction.tileId === tile.id} />)}
+                      {isLast && rightEnd !== null && <span className="edge-number end-edge">{rightEnd}</span>}
+                      {!isLast && <i className="snake-bend" aria-hidden="true" />}
+                    </div>;
+                  })}
+                </div>
+              </div>
             </>}
 
             {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && <div className="round-overlay">
