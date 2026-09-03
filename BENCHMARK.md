@@ -213,3 +213,20 @@ caffeinate -i npm run benchmark:reliability:overnight -- --resume
 ```
 
 The checkpoint manifest includes the seed, budgets, adaptive version and stages, reference budget, repetitions, confidence resamples, and worker count. A mismatched resume is rejected instead of mixing incompatible results. Optional controls for other runs are `--adaptive-stages=LIST`, `--checkpoint=PATH`, `--resume`, `--report=PATH`, and `--fixed-only` in addition to the earlier reliability controls.
+
+## 400-position adaptive result
+
+The preregistered study completed all 400 balanced positions and 1,200 independent trials per analyzer in just under two hours with six workers. The 5,000-sample reference marked 292 of 400 recommendations statistically clear.
+
+| Analyzer | Exact top | Within 1 point | Mean regret | Mistake-label agreement | False positives | Repeat acceptable | Mean runtime |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fixed 120 | 73.6% | 80.8% | 0.68 | 87.7% | 0.8% | 58.0% | 0.67 s |
+| Fixed 500 | 83.3% | 89.9% | 0.27 | 90.2% | 2.2% | 77.8% | 2.62 s |
+| Fixed 2,000 | 91.2% | 96.4% | 0.09 | 94.8% | 2.3% | 92.0% | 9.96 s |
+| Adaptive | 89.4% | 95.3% | 0.11 | 94.3% | 2.1% | 88.8% | 9.26 s |
+
+Adaptive analysis used a mean of 1,373 samples, 31.4% fewer than fixed 2,000, but reduced mean wall time by only 7.0%. It allocated computation in the intended direction: reference-clear positions averaged 1,161 samples while reference-unclear positions averaged 1,945. Of the 1,200 adaptive trials, 258 stopped at 250, 126 at 500, 112 at 1,000, and 704 at 2,000.
+
+The adaptive release gate failed. It passed corpus size, within-one-point quality, and regret, but missed mistake-label agreement at 94.3% versus the 95% requirement, false positives at 2.08% versus the 2% maximum, and repeat acceptability at 88.8% versus the 90% requirement. Fixed 2,000 also failed the complete gate, narrowly missing mistake-label agreement and false positives.
+
+Adaptive analysis therefore remains outside the live coach. It did not match fixed 2,000 overall, although it slightly reduced false-positive mistakes and performed well in late games. The evidence points to cross-deal variability that pooled within-run intervals do not fully capture, early stops that are not stable enough across independent belief samples, and coaching labels near fixed severity thresholds. The next experiment should add between-batch uncertainty and an independent confirmation batch, separate coaching-label calibration from move ranking, and use a new held-out seed rather than tune against this corpus.

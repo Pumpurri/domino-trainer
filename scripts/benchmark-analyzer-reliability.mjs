@@ -67,6 +67,24 @@ function markdownTable(fixed, adaptive, budgets) {
 }
 
 function renderReport({ config, summary, budgets, adaptiveGate }) {
+  const comparisonBudget = Math.max(...budgets);
+  const comparison = summary.overall[comparisonBudget];
+  const sampleSavings = comparisonBudget
+    ? (1 - summary.adaptive.samplesUsed.mean.mean / comparisonBudget) * 100
+    : 0;
+  const runtimeSavings = comparison.runtimeMs.mean
+    ? (1 - summary.adaptive.runtimeMs.mean / comparison.runtimeMs.mean) * 100
+    : 0;
+  const falsePositiveChange = (summary.adaptive.falsePositiveMistakes.mean - comparison.falsePositiveMistakes.mean) * 100;
+  const closeAllocation = summary.adaptive.samplesByReferenceClarity.clear.mean
+    ? summary.adaptive.samplesByReferenceClarity.unclear.mean / summary.adaptive.samplesByReferenceClarity.clear.mean
+    : 0;
+  const failedChecks = Object.entries(adaptiveGate.checks)
+    .filter(([, passed]) => !passed)
+    .map(([check]) => check);
+  const matchedComparison = summary.adaptive.withinOnePoint.mean >= comparison.withinOnePoint.mean
+    && summary.adaptive.meanRegret.mean <= comparison.meanRegret.mean
+    && summary.adaptive.repeatAcceptability.mean >= comparison.repeatAcceptability.mean;
   const stageTotal = Object.values(summary.adaptive.stoppingStages).reduce((sum, count) => sum + count, 0);
   const stageRows = Object.entries(summary.adaptive.stoppingStages).map(([stage, count]) => (
     `| ${stage} | ${count} | ${stageTotal ? (count / stageTotal * 100).toFixed(1) : '0.0'}% |`
@@ -94,6 +112,14 @@ Generated: ${new Date().toISOString()}
 - Adaptive implementation: \`${config.adaptiveVersion}\`
 
 The reference is an independent high-budget estimate, not perfect ground truth. Every analyzer sees only the learner's hand and public evidence. Opponent hands and sleeping tiles are replaced with placeholders before analysis.
+
+## Conclusion
+
+The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release gate** and ${adaptiveGate.passed ? 'can proceed to release integration' : 'must remain outside the live coach'}. It ${matchedComparison ? 'matched or improved' : 'did not match'} fixed ${comparisonBudget} on the combined near-optimality, regret, and repeatability comparison. It used ${sampleSavings.toFixed(1)}% fewer paired samples and ${runtimeSavings.toFixed(1)}% less mean wall time, while its false-positive mistake rate changed by ${falsePositiveChange >= 0 ? '+' : ''}${falsePositiveChange.toFixed(2)} percentage points.
+
+The sampler did allocate more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. However, ${summary.adaptive.samplesUsed.p50} was the median stopping budget and ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of trials still ended uncertain. Failed release checks: ${failedChecks.join(', ')}.
+
+The likely causes are cross-deal variability that is not captured fully by a pooled within-run interval, early stops that remain less repeatable across independent belief samples, and coaching labels near fixed severity boundaries. Opening positions and decisions with three or more legal moves remain the weakest groups. The next experiment should use between-batch uncertainty plus an independent confirmation batch before stopping, calibrate coaching labels separately from move ranking, and evaluate on a new held-out seed instead of tuning against this corpus.
 
 ## Overall results
 
