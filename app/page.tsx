@@ -4,9 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import AnalyzerWorker from './analyzer.worker?worker';
 import {
   analyzeMoves as analyzeSmartMoves,
+  buildDeepReviewReport,
   buildRoundReview,
   chooseBotMove as chooseSmartBotMove,
   createDecisionRecord,
+  createBeliefState,
+  decisionGameFromRecord,
   createOpponentStyles,
   describeOpponentStyle,
   estimateBeliefs as estimateSmartBeliefs,
@@ -18,6 +21,7 @@ import {
   type BeliefState,
   type DecisionRecord,
   type DecisionReview,
+  type DeepReviewReport,
   type Difficulty,
   type OpponentStyleProfile,
   type PracticeReplay,
@@ -100,10 +104,18 @@ type PracticeResult = { selectedKey: string; correct: boolean; replay: PracticeR
 type PracticeState =
   | { source: 'mistake'; decision: DecisionReview; attempt: number; result: PracticeResult | null }
   | { source: 'drill'; drill: TargetedDrill; attempt: number; result: PracticeResult | null };
+type DeepReviewState =
+  | { status: 'idle' }
+  | { status: 'running'; completed: number; total: number; current: number }
+  | { status: 'complete'; report: DeepReviewReport }
+  | { status: 'cancelled' }
+  | { status: 'error'; message: string };
 
 const names = ['You', 'Rosa', 'Tino'];
 const beliefParticleCount = 900;
 const analysisWorkerCount = 4;
+const deepBeliefParticleCount = 1200;
+const deepRepresentativeCount = 500;
 const dotMap: Record<number, number[]> = {
   0: [], 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8],
   5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8],
@@ -288,11 +300,17 @@ function verdictLabel(verdict: RoundReview['decisions'][number]['verdict']): str
 
 function RoundReviewPanel({
   review,
+  deepReview,
+  onRunDeepReview,
+  onCancelDeepReview,
   onPractice,
   onContinue,
   continueLabel,
 }: {
   review: RoundReview;
+  deepReview: DeepReviewState;
+  onRunDeepReview: () => void;
+  onCancelDeepReview: () => void;
   onPractice: (decision: DecisionReview) => void;
   onContinue: () => void;
   continueLabel: string;
@@ -300,6 +318,9 @@ function RoundReviewPanel({
   const beliefAccuracy = review.beliefChecks.total
     ? `${review.beliefChecks.correct}/${review.beliefChecks.total}`
     : 'No reads yet';
+  const comparisons = deepReview.status === 'complete'
+    ? new Map(deepReview.report.comparisons.map((comparison) => [comparison.recordId, comparison]))
+    : new Map();
   return <div className="round-review-overlay">
     <div className="review-header">
       <div><span className="setup-kicker">Round {review.round} coaching report</span><h2>What the table was telling you</h2><p>Advice below uses only what was knowable when each move was played. Revealed hands are shown separately.</p></div>
@@ -309,6 +330,20 @@ function RoundReviewPanel({
         <span><b>{beliefAccuracy}</b><small>reads matched</small></span>
       </div>
     </div>
+
+    <section className={`deep-review-card deep-${deepReview.status}`}>
+      <div>
+        <span className="setup-kicker">500-sample reliability check</span>
+        {deepReview.status === 'idle' && <><h3>Run Deep Review</h3><p>Recheck every meaningful choice across four CPU workers using 500 plausible hidden deals per decision.</p></>}
+        {deepReview.status === 'running' && <><h3>Rechecking decision {deepReview.current} of {deepReview.total}</h3><p>{deepReview.completed} finished. You can cancel without losing the live report.</p><progress max={Math.max(1, deepReview.total)} value={deepReview.completed} /></>}
+        {deepReview.status === 'complete' && <><h3>{deepReview.report.agreed}/{deepReview.report.analyzed} recommendations agreed</h3><p>{deepReview.report.changedRecommendations} changed and {deepReview.report.unstableDecisions} were marked unstable. Deep results now power this report, Mistake Lab, progress, and export labels.</p></>}
+        {deepReview.status === 'cancelled' && <><h3>Deep Review cancelled</h3><p>The original live report is unchanged.</p></>}
+        {deepReview.status === 'error' && <><h3>Deep Review could not finish</h3><p>{deepReview.message}</p></>}
+      </div>
+      {deepReview.status === 'running'
+        ? <button className="deep-review-secondary" type="button" onClick={onCancelDeepReview}>Cancel</button>
+        : deepReview.status !== 'complete' && <button className="deep-review-button" type="button" onClick={onRunDeepReview}>Run 500-sample review</button>}
+    </section>
 
     <div className="review-highlights">
       <article className={`review-highlight ${review.biggestMistake ? 'mistake' : 'clean'}`}>
@@ -326,13 +361,18 @@ function RoundReviewPanel({
     </div>
 
     <div className="review-decisions">
-      {review.decisions.map((decision, index) => <details className={`review-decision verdict-${decision.verdict}`} open={index === 0 || decision === review.biggestMistake} key={decision.record.id}>
+      {review.decisions.map((decision, index) => {
+        const comparison = comparisons.get(decision.record.id);
+        return <details className={`review-decision verdict-${decision.verdict}`} open={index === 0 || decision === review.biggestMistake} key={decision.record.id}>
         <summary>
           <span>Decision {index + 1} · {decision.record.phase}</span>
           <b>{reviewMoveLabel(decision.chosen)}</b>
           <em>{verdictLabel(decision.verdict)}</em>
         </summary>
         <div className="evidence-grid">
+          {comparison && <p className={`deep-comparison ${comparison.unstable ? 'unstable' : 'stable'}`}><strong>Live versus deep</strong>{comparison.agreed
+            ? `Both analyses preferred ${reviewMoveLabel(decision.best)}.${comparison.unstable ? ' The result is still statistically unstable, so treat it as uncertain.' : ' The deeper check supports the live recommendation.'}`
+            : `The live analysis preferred ${comparison.liveBestKey.split(':')[0].replace('-', '–')}, while Deep Review preferred ${comparison.deepBestKey.split(':')[0].replace('-', '–')}. Treat this position as unstable.`}</p>}
           <p><strong>Known</strong>{decision.known}</p>
           <p><strong>Inferred</strong>{decision.inferred}</p>
           <p><strong>Simulated</strong>{decision.simulated}</p>
@@ -340,7 +380,8 @@ function RoundReviewPanel({
           <p className="revealed-evidence"><strong>Revealed afterward</strong>{decision.revealed}</p>
           {decision.record.options.length > 1 && <button className="practice-link evidence-practice" type="button" onClick={() => onPractice(decision)}>Practice this decision</button>}
         </div>
-      </details>)}
+      </details>;
+      })}
       {!review.decisions.length && <div className="review-empty"><h3>No decisions to review</h3><p>You never had a voluntary legal choice during this round.</p></div>}
     </div>
 
@@ -349,7 +390,7 @@ function RoundReviewPanel({
       {review.opponentStartingHands.map(({ player, tiles }) => <div key={player}><b>{names[player]}</b><p>{tiles.map((tile) => tile.id.replace('-', '–')).join(' · ')}</p></div>)}
       <small>These tiles were never available to the live recommendation engine.</small>
     </div>
-    <button className="deal-button" type="button" onClick={onContinue}>{continueLabel}</button>
+    <button className="deal-button" disabled={deepReview.status === 'running'} type="button" onClick={onContinue}>{deepReview.status === 'running' ? 'Deep Review is running' : continueLabel}</button>
   </div>;
 }
 
@@ -491,6 +532,14 @@ function TrainingCenter({
         </section>
       </div>
 
+      <section className="training-card deep-reliability-card">
+        <div><span className="training-card-label">Deep Review reliability</span><h3>{summary.deepReview.rounds
+          ? `${Math.round((summary.deepReview.agreementRate ?? 0) * 100)}% live and deep agreement`
+          : 'No deep-reviewed rounds yet'}</h3><p>{summary.deepReview.rounds
+          ? `${summary.deepReview.analyzed} decisions across ${summary.deepReview.rounds} rounds. ${summary.deepReview.changedRecommendations} recommendations changed and ${summary.deepReview.unstableDecisions} positions were flagged as unstable.`
+          : 'Run Deep Review after a round to measure whether the fast live advice survives a larger 500-sample check.'}</p></div>
+      </section>
+
       <section className="training-card drill-section">
         <div><span className="training-card-label">Targeted practice</span><h3>Six situations strong players recognize quickly</h3></div>
         <div className="drill-grid">{targetedDrills.map((drill) => {
@@ -542,6 +591,7 @@ export default function Home() {
   const [practiceState, setPracticeState] = useState<PracticeState | null>(null);
   const [trainingProgress, setTrainingProgress] = useState<TrainingProgress>(createEmptyTrainingProgress);
   const [trainingReady, setTrainingReady] = useState(false);
+  const [deepReviewState, setDeepReviewState] = useState<DeepReviewState>({ status: 'idle' });
   const dayId = useRef('');
   const analyzerWorkers = useRef<Worker[]>([]);
   const analysisSequence = useRef(0);
@@ -550,6 +600,13 @@ export default function Home() {
     reject: (error: Error) => void;
   }>());
   const analysisCache = useRef(new Map<string, SmartRatedMove[]>());
+  const deepWorkers = useRef<Worker[]>([]);
+  const deepSequence = useRef(0);
+  const deepRunToken = useRef(0);
+  const deepRequests = useRef(new Map<number, {
+    resolve: (ranked: SmartRatedMove[]) => void;
+    reject: (error: Error) => void;
+  }>());
   const legalMoves = game.phase === 'playing' && game.current === 0 ? legalMovesFor(game.hands[0], game.chain) : [];
   const selectedMoves = legalMoves.filter((move) => move.tile.id === selectedId);
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
@@ -581,6 +638,9 @@ export default function Home() {
       ? buildRoundReview(game, decisionRecords)
       : null
   ), [decisionRecords, game]);
+  const effectiveRoundReview = deepReviewState.status === 'complete'
+    ? deepReviewState.report.review
+    : roundReview;
 
   useEffect(() => {
     dayId.current = `day-${Date.now().toString(36)}-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
@@ -588,6 +648,14 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrainingProgress(parseTrainingProgress(window.localStorage.getItem(trainingStorageKey)));
     setTrainingReady(true);
+  }, []);
+
+  useEffect(() => () => {
+    deepRunToken.current += 1;
+    deepRequests.current.forEach(({ reject }) => reject(new Error('Deep Review was stopped.')));
+    deepRequests.current.clear();
+    deepWorkers.current.forEach((worker) => worker.terminate());
+    deepWorkers.current = [];
   }, []);
 
   useEffect(() => {
@@ -682,6 +750,147 @@ export default function Home() {
     }
   }
 
+  function stopDeepReviewWorkers() {
+    deepRunToken.current += 1;
+    deepRequests.current.forEach(({ reject }) => reject(new Error('Deep Review was cancelled.')));
+    deepRequests.current.clear();
+    deepWorkers.current.forEach((worker) => worker.terminate());
+    deepWorkers.current = [];
+  }
+
+  function cancelDeepReview() {
+    stopDeepReviewWorkers();
+    setDeepReviewState({ status: 'cancelled' });
+  }
+
+  function resetDeepReview() {
+    stopDeepReviewWorkers();
+    setDeepReviewState({ status: 'idle' });
+  }
+
+  async function runDeepReview() {
+    if (!roundReview || (game.phase !== 'roundEnd' && game.phase !== 'matchEnd')) return;
+    stopDeepReviewWorkers();
+    const token = deepRunToken.current;
+    const importantRecords = decisionRecords.filter((record) => (
+      record.round === game.round && record.options.length > 1
+    ));
+    setDeepReviewState({ status: 'running', completed: 0, total: importantRecords.length, current: importantRecords.length ? 1 : 0 });
+
+    const receiveAnalysis = (event: MessageEvent<{ id: number; ranked?: SmartRatedMove[]; error?: string }>) => {
+      const pending = deepRequests.current.get(event.data.id);
+      if (!pending) return;
+      deepRequests.current.delete(event.data.id);
+      if (event.data.error || !event.data.ranked) pending.reject(new Error(event.data.error ?? 'No deep analysis returned.'));
+      else pending.resolve(event.data.ranked);
+    };
+    const analysisFailed = () => {
+      deepRequests.current.forEach(({ reject }) => reject(new Error('A Deep Review worker stopped.')));
+      deepRequests.current.clear();
+    };
+    const workers = Array.from({ length: analysisWorkerCount }, () => {
+      const worker = new AnalyzerWorker({ type: 'module' });
+      worker.onmessage = receiveAnalysis;
+      worker.onerror = analysisFailed;
+      return worker;
+    });
+    deepWorkers.current = workers;
+
+    try {
+      const deepRecords: DecisionRecord[] = [];
+      for (let index = 0; index < importantRecords.length; index += 1) {
+        if (deepRunToken.current !== token) throw new Error('Deep Review was cancelled.');
+        const liveRecord = importantRecords[index];
+        const safeGame = decisionGameFromRecord(liveRecord);
+        const deepBelief = createBeliefState(safeGame, 0, deepBeliefParticleCount, liveRecord.styleProfiles);
+        const ranked = mergeMoveAnalyses(await Promise.all(workers.map((worker, shardIndex) => (
+          new Promise<SmartRatedMove[]>((resolve, reject) => {
+            const id = deepSequence.current + 1;
+            deepSequence.current = id;
+            deepRequests.current.set(id, { resolve, reject });
+            worker.postMessage({
+              id,
+              game: safeGame,
+              sampleCount: deepBeliefParticleCount,
+              beliefState: deepBelief,
+              styles: liveRecord.styleProfiles,
+              options: {
+                representativeLimit: deepRepresentativeCount,
+                shardIndex,
+                shardCount: workers.length,
+              },
+            });
+          })
+        ))));
+        if (deepRunToken.current !== token) throw new Error('Deep Review was cancelled.');
+        const chosen = ranked.find((move) => `${move.tile.id}:${move.side}` === liveRecord.chosenKey);
+        if (!chosen) throw new Error(`The saved move for decision ${index + 1} could not be reconstructed.`);
+        const deepBeliefs = estimateSmartBeliefs(
+          safeGame,
+          0,
+          deepBeliefParticleCount,
+          deepBelief,
+          liveRecord.styleProfiles,
+        );
+        const deepRecord = createDecisionRecord(
+          safeGame,
+          ranked,
+          chosen,
+          deepBeliefs,
+          deepBelief,
+          liveRecord.styleProfiles,
+        );
+        if (!deepRecord) throw new Error(`Decision ${index + 1} could not be rebuilt.`);
+        deepRecords.push(deepRecord);
+        setDeepReviewState({
+          status: 'running',
+          completed: index + 1,
+          total: importantRecords.length,
+          current: Math.min(index + 2, importantRecords.length),
+        });
+      }
+      if (deepRunToken.current !== token) throw new Error('Deep Review was cancelled.');
+      const report = buildDeepReviewReport(
+        game,
+        decisionRecords,
+        deepRecords,
+        importantRecords.map((record) => record.id),
+        deepRepresentativeCount,
+      );
+      setDeepReviewState({ status: 'complete', report });
+      if (trainingReady && dayId.current) {
+        const roundKey = `${dayId.current}:round-${report.review.round}`;
+        setTrainingProgress((current) => recordRoundProgress(
+          current,
+          report.review,
+          roundKey,
+          new Date().toISOString(),
+          {
+            analysisQuality: 'deep',
+            deepReview: {
+              sampleCount: report.sampleCount,
+              analyzed: report.analyzed,
+              agreed: report.agreed,
+              changedRecommendations: report.changedRecommendations,
+              unstableDecisions: report.unstableDecisions,
+            },
+            comparisons: report.comparisons,
+          },
+        ));
+      }
+    } catch (error) {
+      if (deepRunToken.current === token) {
+        setDeepReviewState({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'The deeper analysis could not finish.',
+        });
+      }
+    } finally {
+      workers.forEach((worker) => worker.terminate());
+      if (deepWorkers.current === workers) deepWorkers.current = [];
+    }
+  }
+
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback' || trainingOpen || practiceState) return;
     const timer = window.setTimeout(() => {
@@ -713,6 +922,7 @@ export default function Home() {
   }
 
   function beginFirstRound() {
+    resetDeepReview();
     const starter = game.starterDraw?.starter ?? 0;
     setGame(dealRound(game, starter));
     setSelectedId(null);
@@ -722,6 +932,7 @@ export default function Home() {
   }
 
   function resetDay() {
+    resetDeepReview();
     dayId.current = `day-${Date.now().toString(36)}-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
     setGame(initialGame());
     setCoach({ kind: 'intro' });
@@ -867,6 +1078,7 @@ export default function Home() {
   }
 
   function nextRound() {
+    resetDeepReview();
     const winner = game.result?.winner;
     const starter = winner === null || winner === undefined ? game.starter : winner;
     const nextBase = { ...game, round: game.round + 1, starterDraw: game.starterDraw };
@@ -949,8 +1161,11 @@ export default function Home() {
                 <button className="secondary-round-button" type="button" onClick={game.phase === 'matchEnd' ? resetDay : nextRound}>{game.phase === 'matchEnd' ? 'Play another day' : game.result.winner === null ? 'Skip review and replay' : `Skip review · ${names[game.result.winner]} opens`}</button>
               </div>
             </div>}
-            {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && reviewOpen && roundReview && <RoundReviewPanel
-              review={roundReview}
+            {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && reviewOpen && effectiveRoundReview && <RoundReviewPanel
+              review={effectiveRoundReview}
+              deepReview={deepReviewState}
+              onRunDeepReview={runDeepReview}
+              onCancelDeepReview={cancelDeepReview}
               onPractice={practiceDecision}
               onContinue={game.phase === 'matchEnd' ? resetDay : nextRound}
               continueLabel={game.phase === 'matchEnd' ? 'Play another day' : game.result.winner === null ? 'Replay with same opener' : `${names[game.result.winner]} opens next round`}
@@ -1001,7 +1216,7 @@ export default function Home() {
           {coach.kind === 'turn' && <div className="coach-copy"><span className="eyebrow">Your decision</span><h3>{selectedId ? `You selected the ${selectedId.replace('-', '–')}` : coach.message ?? 'What are the opponents telling you?'}</h3><p>{selectedId ? 'Choose which end to play it on, then I’ll evaluate the decision.' : 'Count the open numbers, remember the passes, and choose a tile.'}</p></div>}
           {coach.kind === 'hint' && <div className="coach-copy hint-copy"><span className="eyebrow">A useful hint</span><h3>{coach.title}</h3><p>{coach.body}</p><small>{coach.confidence}</small></div>}
           {coach.kind === 'feedback' && <div className={`feedback-card ${coach.tone}`}><span className="feedback-rating">{coach.rating}</span><h3>{coach.title}</h3><p>{coach.body}</p>{coach.evidence && <div className="live-evidence"><p><b>Known</b>{coach.evidence.known}</p><p><b>Inferred</b>{coach.evidence.inferred}</p><p><b>Simulated</b>{coach.evidence.simulated}</p><p><b>Uncertain</b>{coach.evidence.uncertain}</p></div>}<small>{coach.stat}</small></div>}
-          {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && roundReview && <div className="coach-copy round-ready"><span className="eyebrow">Round report ready</span><h3>{roundReview.biggestMistake ? 'There is one decision worth studying.' : 'No confident mistake was found.'}</h3><p>The review separates what was known, inferred, simulated, and revealed afterward.</p><button className="hint-button" type="button" onClick={() => setReviewOpen(true)}>Open round review</button></div>}
+          {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && effectiveRoundReview && <div className="coach-copy round-ready"><span className="eyebrow">{deepReviewState.status === 'complete' ? 'Deep report ready' : 'Round report ready'}</span><h3>{effectiveRoundReview.biggestMistake ? 'There is one decision worth studying.' : 'No confident mistake was found.'}</h3><p>{deepReviewState.status === 'complete' ? `Deep Review checked ${deepReviewState.report.analyzed} meaningful decisions at 500 samples each.` : 'Open the report to run a 500-sample reliability check.'}</p><button className="hint-button" type="button" onClick={() => setReviewOpen(true)}>Open round review</button></div>}
 
           {game.phase === 'playing' && game.current === 0 && coach.kind !== 'feedback' && <div className="decision-actions">
             {selectedMoves.map((move) => <button className="play-button" disabled={isAnalyzing} key={`${move.tile.id}-${move.side}`} type="button" onClick={() => playUserMove(move)}>{isAnalyzing ? 'Analyzing this decision…' : game.chain.length ? `Play on ${move.side} · ${move.side === 'left' ? leftEnd : rightEnd}` : `Open with ${move.tile.a}–${move.tile.b}`}<span>→</span></button>)}

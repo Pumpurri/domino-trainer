@@ -4,11 +4,13 @@ import {
   analyzeMoves,
   applyMove,
   applyPass,
+  buildDeepReviewReport,
   buildRoundReview,
   chooseCasualMove,
   chooseInformationSafeMove,
   createBeliefState,
   createDecisionRecord,
+  decisionGameFromRecord,
   createOpponentStyles,
   createPracticeGame,
   detectStrategicPhase,
@@ -399,6 +401,55 @@ test('decision records contain information-safe evidence and ignore real hidden 
     secondPractice.hands.slice(1).flat().map(({ id }) => id).sort().join(','),
   );
   assert.ok(simulatePracticeReplies(firstRecord, firstRecord.bestKey, 0));
+
+  const reconstructed = decisionGameFromRecord(firstRecord);
+  assert.deepEqual(reconstructed.hands[0], ownHand);
+  assert.ok(reconstructed.hands.slice(1).flat().every(({ a, b }) => a === -1 && b === -1));
+  assert.ok(!JSON.stringify(reconstructed).includes(available[0].id));
+});
+
+test('deep review replaces live recommendations and marks changed positions unstable', () => {
+  const option = (key, winRate, wins) => {
+    const [tileId, side] = key.split(':');
+    const [a, b] = tileId.split('-').map(Number);
+    return {
+      key, tile: tile(a, b), side, newLeft: b, newRight: 9,
+      winRate, margin: 2, samples: wins.length, nextPassRate: 20,
+      blockedWinRate: 10, emptyWinRate: 30, averagePipsWhenLosing: 12,
+      retainedEndMatches: 1, returnRate: 0.5, pairedWins: wins,
+      pairedWeights: wins.map(() => 1),
+    };
+  };
+  const first = option('1-5:left', 70, Array(20).fill(1));
+  const second = option('1-2:left', 30, Array(20).fill(0));
+  const liveRecord = {
+    id: 'deep-review-1', round: 1, eventCount: 0, phase: 'middle',
+    hand: [tile(1, 5), tile(1, 2)], handSizes: [2, 2, 2], ends: [1, 9],
+    chosenKey: second.key, bestKey: first.key, options: [first, second],
+    knownEvidence: [], inferredEvidence: [], beliefs: [], beliefConfidence: 'high',
+    publicState: { chain: [placed('1-9', 1, 9)], starter: 0, voids: [[], [], []], consecutivePasses: 0, events: [] },
+    probabilityForecasts: [], styleProfiles: [], recommendationReason: 'Live reason.',
+  };
+  const deepFirst = option('1-5:left', 35, Array(20).fill(0));
+  const deepSecond = option('1-2:left', 65, Array(20).fill(1));
+  const deepRecord = { ...liveRecord, bestKey: second.key, options: [deepSecond, deepFirst], recommendationReason: 'Deep reason.' };
+  const finalGame = playingGame({
+    phase: 'roundEnd', round: 1, hands: [[tile(0, 0)], [tile(3, 4)], [tile(6, 7)]],
+    result: { winner: 1, reason: 'empty', pips: [0, 7, 13], matchWinner: null },
+  });
+  const report = buildDeepReviewReport(finalGame, [liveRecord], [deepRecord], [liveRecord.id], 500);
+
+  assert.equal(report.sampleCount, 500);
+  assert.equal(report.analyzed, 1);
+  assert.equal(report.agreed, 0);
+  assert.equal(report.changedRecommendations, 1);
+  assert.equal(report.unstableDecisions, 1);
+  assert.equal(report.review.decisions[0].best.key, second.key);
+  assert.equal(report.review.decisions[0].verdict, 'best');
+
+  const stable = buildDeepReviewReport(finalGame, [deepRecord], [deepRecord], [deepRecord.id], 500);
+  assert.equal(stable.agreed, 1);
+  assert.equal(stable.unstableDecisions, 0);
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {

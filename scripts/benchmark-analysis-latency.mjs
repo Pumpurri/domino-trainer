@@ -10,12 +10,13 @@ import {
 } from '../app/domino-engine.ts';
 
 const workerCount = Math.max(1, Math.min(4, Number.parseInt(process.env.MESA_ANALYSIS_WORKERS ?? '4', 10)));
-const representativeLimit = 120;
+const representativeLimit = Math.max(1, Number.parseInt(process.env.MESA_ANALYSIS_SAMPLES ?? '120', 10));
+const particleCount = Math.max(representativeLimit, Number.parseInt(process.env.MESA_ANALYSIS_PARTICLES ?? '900', 10));
 const game = dealRound(initialGame(), 0, seededRandom('latency-opening'));
-const beliefState = createBeliefState(game, 0, 900);
+const beliefState = createBeliefState(game, 0, particleCount);
 
 const singleStarted = performance.now();
-const single = analyzeMoves(game, 900, beliefState, undefined, { representativeLimit });
+const single = analyzeMoves(game, particleCount, beliefState, undefined, { representativeLimit });
 const singleMs = performance.now() - singleStarted;
 
 const parallelStarted = performance.now();
@@ -23,7 +24,7 @@ const results = await Promise.all(Array.from({ length: workerCount }, (_, shardI
   const worker = new Worker(new URL('./analysis-worker.mjs', import.meta.url), {
     workerData: {
       game,
-      sampleCount: 900,
+      sampleCount: particleCount,
       beliefState,
       options: { representativeLimit, shardIndex, shardCount: workerCount },
     },

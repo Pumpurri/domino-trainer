@@ -82,7 +82,15 @@ Measure the interactive opening fixture:
 npm run benchmark:latency
 ```
 
+Use the Deep Review budget on the same fixture:
+
+```sh
+MESA_ANALYSIS_SAMPLES=500 MESA_ANALYSIS_PARTICLES=1200 npm run benchmark:latency
+```
+
 On the current development machine, a ten-choice opening with 120 samples per move fell from 7,537 ms on one worker to 2,616 ms across four workers, a 2.88x wall-time speedup. The selected move and every merged base win rate were identical. Hardware and browser overhead will change the absolute time.
+
+At the 500-sample Deep Review budget, the same fixture fell from 20,365 ms on one worker to 6,411 ms across four workers, a 3.18x wall-time speedup. The selected move and merged win rates again remained identical.
 
 ## Reported metrics
 
@@ -139,4 +147,14 @@ Progress is device-local and measures estimated decision loss rather than round 
 
 Every reviewed belief probability is paired with the post-round observed outcome and accumulated into reliability buckets. Style tendencies are checked against later revealed legal choices for Rosa and Tino separately. Once at least 40 checks show poor calibration, particle weights and style tendencies are automatically shrunk toward neutral and their displayed confidence is lowered. This safeguard uses only completed-round outcomes and cannot expose a current hidden hand.
 
-The JSON export is deliberately narrower than the live review. It includes public table state, the learner's hand, legal options, simulation estimates, recommendation labels, and calibration outcomes. It excludes revealed opponent hands, sleeping tiles, and the large paired rollout arrays. Automated tests enforce replay consistency, regenerated deals, calibration down-weighting, legal drill answers, progress idempotency, and export privacy.
+The JSON export is deliberately narrower than the live review. It includes public table state, the learner's hand, legal options, simulation estimates, recommendation labels, analysis quality, Deep Review agreement totals, and calibration outcomes. It excludes revealed opponent hands, sleeping tiles, and the large paired rollout arrays. Automated tests enforce replay consistency, regenerated deals, calibration down-weighting, legal drill answers, progress idempotency, and export privacy.
+
+## Deep Review
+
+The live coach uses 120 representative hidden deals so a move can be played without a long wait. Deep Review is an optional post-round pass that rebuilds every decision with more than one legal option from the stored public chain, public events, proven voids, hand sizes, opponent-style state, and the learner's own hand. Opponent tile slots are placeholders while new plausible deals are generated, so the completed round's real hidden hands never enter the simulation.
+
+Each meaningful decision is evaluated on 500 weighted representatives from a new 1,200-particle belief pool. Four browser workers analyze disjoint shards and merge the paired outcomes. The interface reports progress and supports cancellation. A cancelled or failed run keeps the original live report.
+
+The finished report records exact recommendation agreement, changed recommendations, and unstable positions. A position is unstable when the recommendation changes, the deep verdict remains statistically close, confidence is low, or the paired 95% difference interval crosses zero. Deep labels replace live labels for that round in Mistake Lab, device-local progress, and information-safe exports. A later live rerender cannot overwrite a completed deep label.
+
+Deep Review does not change Rosa, Tino, or the release move selector. The matched benchmark remains the policy gate, while Deep Review measures the reliability of coaching labels with a larger per-decision budget.

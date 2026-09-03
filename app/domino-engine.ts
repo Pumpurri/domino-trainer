@@ -212,6 +212,28 @@ export type RoundReview = {
   };
   opponentStartingHands: { player: number; tiles: Tile[] }[];
 };
+export type DeepDecisionComparison = {
+  recordId: string;
+  analyzed: true;
+  agreed: boolean;
+  liveBestKey: string;
+  deepBestKey: string;
+  liveVerdict: DecisionVerdict;
+  deepVerdict: DecisionVerdict;
+  liveWinRateGap: number;
+  deepWinRateGap: number;
+  unstable: boolean;
+};
+export type DeepReviewReport = {
+  review: RoundReview;
+  comparisons: DeepDecisionComparison[];
+  sampleCount: number;
+  analyzed: number;
+  agreed: number;
+  changedRecommendations: number;
+  unstableDecisions: number;
+  agreementRate: number;
+};
 export type PracticeReply = {
   player: number;
   kind: 'play' | 'pass';
@@ -2651,7 +2673,7 @@ export function createDecisionRecord(
   };
 }
 
-function practiceGameFromRecord(record: DecisionRecord): Game {
+export function decisionGameFromRecord(record: DecisionRecord): Game {
   return {
     phase: 'playing',
     scores: [0, 0, 0],
@@ -2673,7 +2695,7 @@ function practiceGameFromRecord(record: DecisionRecord): Game {
 }
 
 export function createPracticeGame(record: DecisionRecord, attempt = 0): Game | null {
-  const safeGame = practiceGameFromRecord(record);
+  const safeGame = decisionGameFromRecord(record);
   const seed = `mistake-lab|${record.id}|${attempt}`;
   const particles = buildParticles(safeGame, 0, 48, seed, record.styleProfiles);
   if (!particles.length) return null;
@@ -2910,6 +2932,58 @@ export function buildRoundReview(finalGame: Game, records: DecisionRecord[]): Ro
       player,
       tiles: [...startingHands[player]].sort((left, right) => left.a - right.a || left.b - right.b),
     })),
+  };
+}
+
+export function buildDeepReviewReport(
+  finalGame: Game,
+  liveRecords: DecisionRecord[],
+  deepRecords: DecisionRecord[],
+  analyzedRecordIds: string[],
+  sampleCount: number,
+): DeepReviewReport {
+  const analyzedIds = new Set(analyzedRecordIds);
+  const deepById = new Map(deepRecords.map((record) => [record.id, record]));
+  const authoritativeRecords = liveRecords.map((record) => (
+    analyzedIds.has(record.id) ? deepById.get(record.id) ?? record : record
+  ));
+  const liveReview = buildRoundReview(finalGame, liveRecords);
+  const review = buildRoundReview(finalGame, authoritativeRecords);
+  const liveDecisions = new Map(liveReview.decisions.map((decision) => [decision.record.id, decision]));
+  const deepDecisions = new Map(review.decisions.map((decision) => [decision.record.id, decision]));
+  const comparisons = analyzedRecordIds.flatMap((recordId): DeepDecisionComparison[] => {
+    const live = liveDecisions.get(recordId);
+    const deep = deepDecisions.get(recordId);
+    if (!live || !deep || !deepById.has(recordId)) return [];
+    const agreed = live.best.key === deep.best.key;
+    const runnerUp = deep.record.options.find((option) => option.key !== deep.best.key);
+    const recommendationInterval = runnerUp ? pairedDifference(deep.best, runnerUp).interval : null;
+    const recommendationIsUncertain = recommendationInterval ? recommendationInterval[0] <= 0 : false;
+    return [{
+      recordId,
+      analyzed: true,
+      agreed,
+      liveBestKey: live.best.key,
+      deepBestKey: deep.best.key,
+      liveVerdict: live.verdict,
+      deepVerdict: deep.verdict,
+      liveWinRateGap: live.winRateGap,
+      deepWinRateGap: deep.winRateGap,
+      unstable: !agreed || deep.verdict === 'close' || deep.record.beliefConfidence === 'low' || recommendationIsUncertain,
+    }];
+  });
+  const agreed = comparisons.filter((comparison) => comparison.agreed).length;
+  const changedRecommendations = comparisons.length - agreed;
+  const unstableDecisions = comparisons.filter((comparison) => comparison.unstable).length;
+  return {
+    review,
+    comparisons,
+    sampleCount,
+    analyzed: comparisons.length,
+    agreed,
+    changedRecommendations,
+    unstableDecisions,
+    agreementRate: comparisons.length ? agreed / comparisons.length : 1,
   };
 }
 

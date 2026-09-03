@@ -10,12 +10,15 @@ Mesa Quince is a laptop-first Cuban domino trainer for three-player double-nine 
 - Uses deeper information-set search as diagnostic evidence on close decisions.
 - Learns public playing tendencies for Rosa and Tino over the course of the day.
 - Records each user decision and creates an information-safe post-round review.
+- Offers a four-core Deep Review that rechecks meaningful choices on 500 plausible deals, compares live and deep advice, and flags unstable positions.
 - Reveals actual hands only after the round and keeps hindsight separate from live advice.
 - Replays mistakes against newly generated hidden hands that fit the same public evidence.
 - Saves laptop-local progress by phase, recurring leak, and rolling 10, 25, and 50-round windows.
 - Includes six targeted drills for passes, one-tile threats, end control, exit routes, blocking, and inference.
 - Audits belief probabilities and opponent-style predictions, then lowers their influence when calibration is poor.
 - Exports an information-safe JSON training dataset without opponent hands or sleeping tiles.
+
+The live coach is optimized for responsiveness. After a round, Deep Review can spend more computation on each meaningful decision. Its labels replace the live labels in Mistake Lab, local progress, and exported examples only after the deeper run completes. A cancelled or failed run leaves the live report intact.
 
 The release selector is benchmark-gated. Deeper tree search cannot control a move until it beats the current policy in balanced matched-deal testing.
 

@@ -131,6 +131,55 @@ test('progress is idempotent, tracks rolling improvement, and records drill mast
   assert.equal(parseTrainingProgress(JSON.stringify(progress)).rounds.length, 20);
 });
 
+test('deep review replaces live labels and cannot be overwritten by a later live report', () => {
+  const liveReview = reviewWithGap(20);
+  const deepReview = reviewWithGap(5);
+  let progress = recordRoundProgress(createEmptyTrainingProgress(), liveReview, 'round-deep');
+  assert.equal(progress.rounds[0].analysisQuality, 'live');
+  assert.equal(progress.examples[0].estimatedWinRateLost, 20);
+
+  const deepRecordId = deepReview.decisions[0].record.id;
+  progress = recordRoundProgress(progress, deepReview, 'round-deep', '2026-09-03T01:00:00.000Z', {
+    analysisQuality: 'deep',
+    deepReview: {
+      sampleCount: 500,
+      analyzed: 1,
+      agreed: 0,
+      changedRecommendations: 1,
+      unstableDecisions: 1,
+    },
+    comparisons: [{
+      recordId: deepRecordId,
+      analyzed: true,
+      agreed: false,
+      liveBestKey: '4-9:right',
+      deepBestKey: '1-6:left',
+      liveVerdict: 'best',
+      deepVerdict: 'mistake',
+      liveWinRateGap: 0,
+      deepWinRateGap: 5,
+      unstable: true,
+    }],
+  });
+
+  assert.equal(progress.rounds.length, 1);
+  assert.equal(progress.rounds[0].analysisQuality, 'deep');
+  assert.equal(progress.examples.length, 1);
+  assert.equal(progress.examples[0].analysisQuality, 'deep');
+  assert.equal(progress.examples[0].estimatedWinRateLost, 5);
+  assert.equal(progress.examples[0].recommendationChanged, true);
+  assert.equal(progress.beliefCalibration.length, 1);
+  const deepProgress = progress;
+  progress = recordRoundProgress(progress, liveReview, 'round-deep');
+  assert.equal(progress, deepProgress);
+
+  const summary = progressSummary(progress);
+  assert.equal(summary.deepReview.rounds, 1);
+  assert.equal(summary.deepReview.agreementRate, 0);
+  assert.equal(summary.deepReview.changedRecommendations, 1);
+  assert.equal(summary.deepReview.unstableDecisions, 1);
+});
+
 test('calibration groups claimed probabilities against observed rates', () => {
   const summary = calibrationSummary([
     { player: 1, label: 'holds-1', forecast: 0.1, observed: 0, confidence: 'high' },
@@ -202,9 +251,30 @@ test('poor calibration lowers belief and style confidence without changing hidde
 test('dataset export excludes revealed opponent hands and keeps safe decision labels', () => {
   const progress = recordRoundProgress(createEmptyTrainingProgress(), reviewWithGap(20), 'round-safe');
   const exported = serializeTrainingDataset(progress, '2026-09-03T00:00:00.000Z');
-  assert.ok(exported.includes('mesa-quince-information-safe-v1'));
+  assert.ok(exported.includes('mesa-quince-information-safe-v2'));
   assert.ok(exported.includes('1-6:left'));
   assert.ok(!exported.includes('SECRET-HIDDEN'));
   assert.ok(!exported.includes('opponentStartingHands'));
   assert.ok(!exported.includes('pairedWins'));
+});
+
+test('dataset exports deep-review provenance without hidden hands', () => {
+  const review = reviewWithGap(5);
+  const recordId = review.decisions[0].record.id;
+  const progress = recordRoundProgress(createEmptyTrainingProgress(), review, 'round-deep-safe', undefined, {
+    analysisQuality: 'deep',
+    deepReview: { sampleCount: 500, analyzed: 1, agreed: 1, changedRecommendations: 0, unstableDecisions: 0 },
+    comparisons: [{
+      recordId, analyzed: true, agreed: true,
+      liveBestKey: '1-6:left', deepBestKey: '1-6:left',
+      liveVerdict: 'mistake', deepVerdict: 'mistake',
+      liveWinRateGap: 5, deepWinRateGap: 5, unstable: false,
+    }],
+  });
+  const exported = serializeTrainingDataset(progress, '2026-09-03T00:00:00.000Z');
+  assert.ok(exported.includes('"analysisQuality": "deep"'));
+  assert.ok(exported.includes('"liveBestKey": "1-6:left"'));
+  assert.ok(exported.includes('"recommendationChanged": false'));
+  assert.ok(!exported.includes('SECRET-HIDDEN'));
+  assert.ok(!exported.includes('opponentStartingHands'));
 });

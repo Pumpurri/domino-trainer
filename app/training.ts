@@ -2,6 +2,7 @@ import {
   legalMovesFor,
   type BeliefState,
   type CalibrationPoint,
+  type DeepDecisionComparison,
   type DecisionOption,
   type DecisionPublicState,
   type DecisionReview,
@@ -23,6 +24,15 @@ export type TrainingCategory =
   | 'inference';
 
 export type TrainingOption = Omit<DecisionOption, 'pairedWins' | 'pairedWeights'>;
+export type AnalysisQuality = 'live' | 'deep';
+export type DeepReviewMetrics = {
+  sampleCount: number;
+  analyzed: number;
+  agreed: number;
+  changedRecommendations: number;
+  unstableDecisions: number;
+};
+export type StoredCalibrationPoint = CalibrationPoint & { roundKey?: string };
 
 export type TrainingExample = {
   id: string;
@@ -41,6 +51,10 @@ export type TrainingExample = {
   beliefConfidence: DecisionReview['confidence'];
   probabilityForecasts: { player: number; value: number; probability: number }[];
   styleProfiles: OpponentStyleProfile[];
+  analysisQuality: AnalysisQuality;
+  liveBestKey?: string;
+  recommendationChanged?: boolean;
+  unstable?: boolean;
 };
 
 export type RoundProgress = {
@@ -51,6 +65,8 @@ export type RoundProgress = {
   estimatedWinRateLost: number;
   byPhase: Partial<Record<StrategicPhase, { decisions: number; mistakes: number; loss: number }>>;
   weaknesses: Partial<Record<TrainingCategory, number>>;
+  analysisQuality: AnalysisQuality;
+  deepReview?: DeepReviewMetrics;
 };
 
 export type DrillProgress = {
@@ -67,8 +83,8 @@ export type TrainingProgress = {
   version: 1;
   rounds: RoundProgress[];
   drills: DrillProgress[];
-  beliefCalibration: CalibrationPoint[];
-  styleCalibration: CalibrationPoint[];
+  beliefCalibration: StoredCalibrationPoint[];
+  styleCalibration: StoredCalibrationPoint[];
   examples: TrainingExample[];
 };
 
@@ -105,6 +121,20 @@ export type ProgressSummary = {
   beliefCalibration: CalibrationSummary;
   styleCalibration: CalibrationSummary;
   styleCalibrationByPlayer: Array<{ player: number; summary: CalibrationSummary }>;
+  deepReview: {
+    rounds: number;
+    analyzed: number;
+    agreed: number;
+    changedRecommendations: number;
+    unstableDecisions: number;
+    agreementRate: number | null;
+  };
+};
+
+export type RecordRoundProgressOptions = {
+  analysisQuality?: AnalysisQuality;
+  deepReview?: DeepReviewMetrics;
+  comparisons?: DeepDecisionComparison[];
 };
 
 export type TargetedDrill = {
@@ -177,11 +207,17 @@ export function parseTrainingProgress(serialized: string | null): TrainingProgre
     if (parsed.version !== 1) return createEmptyTrainingProgress();
     return {
       version: 1,
-      rounds: Array.isArray(parsed.rounds) ? parsed.rounds.slice(-200) : [],
+      rounds: Array.isArray(parsed.rounds) ? parsed.rounds.slice(-200).map((round) => ({
+        ...round,
+        analysisQuality: round.analysisQuality === 'deep' ? 'deep' : 'live',
+      })) : [],
       drills: Array.isArray(parsed.drills) ? parsed.drills : [],
       beliefCalibration: Array.isArray(parsed.beliefCalibration) ? parsed.beliefCalibration.slice(-5000) : [],
       styleCalibration: Array.isArray(parsed.styleCalibration) ? parsed.styleCalibration.slice(-2500) : [],
-      examples: Array.isArray(parsed.examples) ? parsed.examples.slice(-300) : [],
+      examples: Array.isArray(parsed.examples) ? parsed.examples.slice(-300).map((example) => ({
+        ...example,
+        analysisQuality: example.analysisQuality === 'deep' ? 'deep' : 'live',
+      })) : [],
     };
   } catch {
     return createEmptyTrainingProgress();
@@ -202,7 +238,12 @@ export function decisionCategory(decision: DecisionReview): TrainingCategory {
   return 'end-control';
 }
 
-function trainingExample(roundKey: string, decision: DecisionReview): TrainingExample {
+function trainingExample(
+  roundKey: string,
+  decision: DecisionReview,
+  quality: AnalysisQuality,
+  comparison?: DeepDecisionComparison,
+): TrainingExample {
   const { record } = decision;
   return {
     id: `${roundKey}:${record.id}`,
@@ -236,6 +277,10 @@ function trainingExample(roundKey: string, decision: DecisionReview): TrainingEx
     beliefConfidence: decision.confidence,
     probabilityForecasts: record.probabilityForecasts.map((forecast) => ({ ...forecast })),
     styleProfiles: record.styleProfiles.map((style) => ({ ...style })),
+    analysisQuality: quality,
+    liveBestKey: comparison?.liveBestKey,
+    recommendationChanged: comparison ? !comparison.agreed : undefined,
+    unstable: comparison?.unstable,
   };
 }
 
@@ -244,8 +289,12 @@ export function recordRoundProgress(
   review: RoundReview,
   roundKey: string,
   completedAt = new Date().toISOString(),
+  options: RecordRoundProgressOptions = {},
 ): TrainingProgress {
-  if (progress.rounds.some((round) => round.id === roundKey)) return progress;
+  const quality = options.analysisQuality ?? 'live';
+  const existing = progress.rounds.find((round) => round.id === roundKey);
+  if (existing && (existing.analysisQuality === 'deep' || quality === 'live')) return progress;
+  const comparisonById = new Map((options.comparisons ?? []).map((comparison) => [comparison.recordId, comparison]));
   const byPhase: RoundProgress['byPhase'] = {};
   const weaknesses: RoundProgress['weaknesses'] = {};
   let confidentMistakes = 0;
@@ -274,14 +323,25 @@ export function recordRoundProgress(
     estimatedWinRateLost,
     byPhase,
     weaknesses,
+    analysisQuality: quality,
+    deepReview: quality === 'deep' ? options.deepReview : undefined,
   };
+  const rounds = progress.rounds.filter((saved) => saved.id !== roundKey);
+  const beliefCalibration = progress.beliefCalibration.filter((point) => point.roundKey !== roundKey);
+  const styleCalibration = progress.styleCalibration.filter((point) => point.roundKey !== roundKey);
+  const examples = progress.examples.filter((example) => example.roundKey !== roundKey);
   return {
     version: 1,
-    rounds: [...progress.rounds, round].slice(-200),
+    rounds: [...rounds, round].slice(-200),
     drills: progress.drills,
-    beliefCalibration: [...progress.beliefCalibration, ...review.calibration.belief].slice(-5000),
-    styleCalibration: [...progress.styleCalibration, ...review.calibration.style].slice(-2500),
-    examples: [...progress.examples, ...review.decisions.map((decision) => trainingExample(roundKey, decision))].slice(-300),
+    beliefCalibration: [...beliefCalibration, ...review.calibration.belief.map((point) => ({ ...point, roundKey }))].slice(-5000),
+    styleCalibration: [...styleCalibration, ...review.calibration.style.map((point) => ({ ...point, roundKey }))].slice(-2500),
+    examples: [...examples, ...review.decisions.map((decision) => trainingExample(
+      roundKey,
+      decision,
+      quality,
+      comparisonById.get(decision.record.id),
+    ))].slice(-300),
   };
 }
 
@@ -379,6 +439,13 @@ export function progressSummary(progress: TrainingProgress): ProgressSummary {
   progress.rounds.forEach((round) => Object.entries(round.weaknesses).forEach(([category, count]) => {
     weaknessCounts.set(category as TrainingCategory, (weaknessCounts.get(category as TrainingCategory) ?? 0) + (count ?? 0));
   }));
+  const deepRounds = progress.rounds.filter((round) => round.analysisQuality === 'deep' && round.deepReview);
+  const deepTotals = deepRounds.reduce((total, round) => ({
+    analyzed: total.analyzed + (round.deepReview?.analyzed ?? 0),
+    agreed: total.agreed + (round.deepReview?.agreed ?? 0),
+    changedRecommendations: total.changedRecommendations + (round.deepReview?.changedRecommendations ?? 0),
+    unstableDecisions: total.unstableDecisions + (round.deepReview?.unstableDecisions ?? 0),
+  }), { analyzed: 0, agreed: 0, changedRecommendations: 0, unstableDecisions: 0 });
   return {
     rounds: progress.rounds.length,
     decisions,
@@ -394,6 +461,11 @@ export function progressSummary(progress: TrainingProgress): ProgressSummary {
       player,
       summary: calibrationSummary(progress.styleCalibration.filter((point) => point.player === player)),
     })),
+    deepReview: {
+      rounds: deepRounds.length,
+      ...deepTotals,
+      agreementRate: deepTotals.analyzed ? deepTotals.agreed / deepTotals.analyzed : null,
+    },
   };
 }
 
@@ -467,9 +539,17 @@ export function opponentArchetype(style: OpponentStyleProfile): string {
 
 export function serializeTrainingDataset(progress: TrainingProgress, exportedAt = new Date().toISOString()): string {
   return JSON.stringify({
-    schema: 'mesa-quince-information-safe-v1',
+    schema: 'mesa-quince-information-safe-v2',
     exportedAt,
     privacy: 'Contains public table state, the learner hand, model estimates, and post-round outcome labels. It never contains an opponent hidden hand or sleeping tiles.',
+    analysis: {
+      reviewedRounds: progress.rounds.map((round) => ({
+        id: round.id,
+        completedAt: round.completedAt,
+        analysisQuality: round.analysisQuality,
+        deepReview: round.deepReview,
+      })),
+    },
     examples: progress.examples,
     calibration: {
       belief: progress.beliefCalibration,
