@@ -4,7 +4,7 @@ The benchmark compares three policies:
 
 - `random` chooses an arbitrary legal move and provides a low-skill baseline.
 - `casual` uses the engine's phase-aware move policy.
-- `strong` samples hidden hands and simulates the remaining round with that same phase-aware policy at every future turn.
+- `strong` samples hidden hands and simulates the remaining round with a public-information three-turn policy at every future decision.
 
 ## Phase-aware policy
 
@@ -16,6 +16,12 @@ The policy identifies four strategic situations and changes its priorities accor
 - Likely blocks compare the player's remaining pip position with estimated opponent totals and favor moves that improve the expected blocked result.
 
 Only a pass creates a certain void. Other tile choices influence hidden-hand probabilities but do not prove that a player lacks a number.
+
+## Information-safe three-turn search
+
+For every choice with multiple legal moves, the acting player looks through the candidate move and likely replies from the next two seats. The leaf evaluation checks whether that player is likely to have a legal route back onto the board when the turn returns.
+
+Each simulated player receives only its own sampled hand plus public information: the chain, played tiles, hand sizes, and proven voids from passes. Likely replies are estimated from the public unseen pool. The rollout policy never receives either opponent's sampled tile identities, including in the late game.
 
 ## Matched schedule
 
@@ -46,11 +52,13 @@ Save a machine-readable baseline:
 npm run benchmark -- --json=outputs/benchmark-baseline.json
 ```
 
-Run production-equivalent Strong search. This is substantially slower:
+Run the same 120-sample search used by the interactive Strong opponent:
 
 ```sh
-npm run benchmark -- --samples=500 --json=outputs/benchmark-production.json
+npm run benchmark -- --samples=120 --json=outputs/benchmark-production.json
 ```
+
+The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for full-round rollouts. This preserves a broad belief pool while keeping an interactive decision responsive. The three-turn forecast itself evaluates every legal user move.
 
 The main controls are:
 

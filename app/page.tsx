@@ -684,7 +684,7 @@ export default function Home() {
             <span>Opponent level</span>
             <div><button className={difficulty === 'casual' ? 'active' : ''} type="button" onClick={() => setDifficulty('casual')}>Casual</button><button className={difficulty === 'strong' ? 'active' : ''} type="button" onClick={() => setDifficulty('strong')}>Strong</button></div>
           </div>
-          <div className="coach-footer"><span>Coach method</span><b><i /> 900 persistent deals + endgame solver</b></div>
+          <div className="coach-footer"><span>Coach method</span><b><i /> 900 beliefs + 3-turn search</b></div>
         </aside>
       </section>
     </main>

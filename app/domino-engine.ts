@@ -53,12 +53,19 @@ export type MoveEvidence = {
   averagePipsWhenLosing: number;
   retainedEndMatches: number;
 };
+export type LookaheadForecast = {
+  score: number;
+  returnRate: number;
+  exploredBranches: number;
+  plies: 3;
+};
 export type RatedMove = Move & {
   samples: number;
   effectiveSamples: number;
   winRate: number;
   margin: number;
   heuristic: number;
+  lookahead: LookaheadForecast;
   evidence: MoveEvidence;
 };
 export type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
@@ -95,6 +102,8 @@ type RolloutOutcome = {
   pips: number[];
 };
 type SolvedOutcome = { winner: number | null; reason: 'empty' | 'blocked'; utility: number[] };
+
+const interactiveSearchSamples = 120;
 
 export const names = ['You', 'Rosa', 'Tino'];
 
@@ -699,6 +708,27 @@ function systematicResample(particles: BeliefParticle[], count: number, random: 
   return sampled;
 }
 
+function representativeParticles(particles: BeliefParticle[], count: number): BeliefParticle[] {
+  if (particles.length <= count) return particles;
+  const normalized = normalizeParticleWeights(particles);
+  const cumulative: number[] = [];
+  let total = 0;
+  normalized.forEach((particle) => {
+    total += particle.weight;
+    cumulative.push(total);
+  });
+  const step = total / count;
+  let target = step / 2;
+  let particleIndex = 0;
+  const representatives: BeliefParticle[] = [];
+  for (let index = 0; index < count; index += 1) {
+    while (particleIndex < cumulative.length - 1 && target > cumulative[particleIndex]) particleIndex += 1;
+    representatives.push({ hands: normalized[particleIndex].hands, weight: 1 });
+    target += step;
+  }
+  return representatives;
+}
+
 function beliefSeed(game: Game, perspective: number, label: string): string {
   return `${label}|${perspective}|${game.round}|${game.events.length}|${handSignature(game.hands[perspective])}|${game.chain.map((tile) => tile.id).join(',')}`;
 }
@@ -935,11 +965,274 @@ function solveEndgame(hands: Tile[][], left: number, right: number, current: num
   return best!;
 }
 
-function selectRolloutMove(hands: Tile[][], legal: Move[], voids: Set<number>[], current: number, context: StrategyContext): Move {
-  const handSizes = hands.map((hand) => hand.length);
-  return legal
-    .map((move) => ({ move, score: moveHeuristic(move, hands[current], voids, current, handSizes, context) }))
-    .sort((a, b) => b.score - a.score)[0].move;
+type PublicSearchState = {
+  root: number;
+  current: number;
+  left: number;
+  right: number;
+  passes: number;
+  chainLength: number;
+  rootHand: Tile[];
+  handSizes: number[];
+  voids: Set<number>[];
+  unseenTiles: Tile[];
+  playedTiles: Tile[];
+};
+
+type SearchAggregate = { value: number; returnRate: number; exploredBranches: number };
+type PublicReply = { probability: number; move: Move | null };
+
+function expectedHiddenPips(unseenTiles: Tile[], handSize: number, knownVoids: Set<number>): number {
+  if (!handSize) return 0;
+  const eligible = unseenTiles.filter((tile) => !knownVoids.has(tile.a) && !knownVoids.has(tile.b));
+  if (!eligible.length) return handSize * 9;
+  return handSize * eligible.reduce((sum, tile) => sum + tile.a + tile.b, 0) / eligible.length;
+}
+
+function expectedBlockValue(state: PublicSearchState): number {
+  const ownPips = pipTotal(state.rootHand);
+  const opponentPips = [0, 1, 2]
+    .filter((player) => player !== state.root)
+    .map((player) => expectedHiddenPips(state.unseenTiles, state.handSizes[player], state.voids[player]));
+  const pipEdge = Math.min(...opponentPips) - ownPips;
+  return Math.max(-24, Math.min(24, pipEdge * 0.65)) + (pipEdge > 2 ? 9 : pipEdge < -2 ? -9 : 0);
+}
+
+function rootSearchContext(state: PublicSearchState): StrategyContext {
+  const expectedPips = state.handSizes.map((size, player) => player === state.root
+    ? pipTotal(state.rootHand)
+    : expectedHiddenPips(state.unseenTiles, size, state.voids[player]));
+  return {
+    phase: inferStrategicPhase(
+      state.rootHand,
+      state.handSizes,
+      state.chainLength,
+      state.passes,
+      state.left,
+      state.right,
+      state.voids,
+      state.root,
+    ),
+    chainLength: state.chainLength,
+    consecutivePasses: state.passes,
+    unseenTiles: state.unseenTiles,
+    expectedPips,
+  };
+}
+
+function evaluateRootReturn(state: PublicSearchState): SearchAggregate {
+  const returnMoves = legalMovesForEnds(state.rootHand, state.left, state.right);
+  if (!returnMoves.length && state.passes >= 2) {
+    return { value: expectedBlockValue(state), returnRate: 0, exploredBranches: 1 };
+  }
+  const ownPips = pipTotal(state.rootHand);
+  const expectedOpponentLow = Math.min(...[0, 1, 2]
+    .filter((player) => player !== state.root)
+    .map((player) => expectedHiddenPips(state.unseenTiles, state.handSizes[player], state.voids[player])));
+  const pipPosition = Math.max(-12, Math.min(12, (expectedOpponentLow - ownPips) * 0.12));
+  if (!returnMoves.length) return { value: -10 + pipPosition, returnRate: 0, exploredBranches: 1 };
+
+  const context = rootSearchContext(state);
+  const bestReturn = Math.max(...returnMoves.map((move) => moveHeuristic(
+    move,
+    state.rootHand,
+    state.voids,
+    state.root,
+    state.handSizes,
+    context,
+  )));
+  const exitBonus = state.rootHand.length <= 2 ? 5 : state.rootHand.length <= 4 ? 2 : 0;
+  return {
+    value: 8 + Math.min(30, bestReturn) * 0.28 + pipPosition + exitBonus,
+    returnRate: 1,
+    exploredBranches: 1,
+  };
+}
+
+function publicReplyScore(state: PublicSearchState, move: Move): number {
+  const actor = state.current;
+  const next = (actor + 1) % 3;
+  const remainingUnseen = state.unseenTiles.filter((tile) => tile.id !== move.tile.id);
+  const actorEligible = remainingUnseen.filter((tile) => !state.voids[actor].has(tile.a) && !state.voids[actor].has(tile.b));
+  const ends = uniqueEnds(move);
+  const expectedControl = actorEligible.length > 0
+    ? ends.reduce((sum, value) => sum + actorEligible.filter((tile) => matchesValue(tile, value)).length, 0)
+      * Math.max(0, state.handSizes[actor] - 1) / actorEligible.length
+    : 0;
+  const nextPassChance = 1 - answerProbability(remainingUnseen, state.handSizes[next], state.voids[next], ends);
+  const certainNextPass = ends.every((value) => state.voids[next].has(value));
+  return (move.tile.a + move.tile.b) * 0.18
+    + (move.tile.a === move.tile.b ? 0.9 : 0)
+    + expectedControl * 0.85
+    + nextPassChance * (state.handSizes[next] <= 2 ? 5 : 2.2)
+    + (certainNextPass ? 3.5 : 0);
+}
+
+function likelyPublicReplies(state: PublicSearchState): PublicReply[] {
+  const actor = state.current;
+  const ends = openValues(state.left, state.right);
+  const answerChance = answerProbability(state.unseenTiles, state.handSizes[actor], state.voids[actor], ends);
+  const eligible = state.unseenTiles.filter((tile) => !state.voids[actor].has(tile.a) && !state.voids[actor].has(tile.b));
+  const legal = legalMovesForEnds(eligible, state.left, state.right);
+  if (!legal.length || answerChance <= 0.001) return [{ probability: 1, move: null }];
+
+  const scored = legal
+    .map((move) => ({ move, score: publicReplyScore(state, move) }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 2);
+  const maximum = scored[0].score;
+  const weights = scored.map(({ score }) => Math.exp((score - maximum) / 1.8));
+  const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+  const replies: PublicReply[] = scored.map(({ move }, index) => ({ probability: answerChance * weights[index] / weightTotal, move }));
+  const passChance = 1 - answerChance;
+  if (passChance > 0) replies.push({ probability: passChance, move: null });
+  return replies;
+}
+
+function applyPublicReply(state: PublicSearchState, reply: PublicReply): PublicSearchState {
+  const actor = state.current;
+  if (!reply.move) {
+    const voids = state.voids.map((values) => new Set(values));
+    voids[actor].add(state.left);
+    voids[actor].add(state.right);
+    return { ...state, current: (actor + 1) % 3, passes: state.passes + 1, voids };
+  }
+  const handSizes = [...state.handSizes];
+  handSizes[actor] -= 1;
+  return {
+    ...state,
+    current: (actor + 1) % 3,
+    left: reply.move.newLeft,
+    right: reply.move.newRight,
+    passes: 0,
+    chainLength: state.chainLength + 1,
+    handSizes,
+    unseenTiles: state.unseenTiles.filter((tile) => tile.id !== reply.move!.tile.id),
+    playedTiles: [...state.playedTiles, reply.move.tile],
+  };
+}
+
+function searchLikelyReplies(state: PublicSearchState, remainingReplies: number): SearchAggregate {
+  if (remainingReplies <= 0 || state.current === state.root) return evaluateRootReturn(state);
+  const branches = likelyPublicReplies(state);
+  let value = 0;
+  let returnRate = 0;
+  let exploredBranches = 0;
+  for (const branch of branches) {
+    const next = applyPublicReply(state, branch);
+    let result: SearchAggregate;
+    if (branch.move && next.handSizes[state.current] === 0) {
+      result = { value: -100, returnRate: 0, exploredBranches: 1 };
+    } else if (!branch.move && next.passes >= 3) {
+      result = { value: expectedBlockValue(next), returnRate: 0, exploredBranches: 1 };
+    } else {
+      result = searchLikelyReplies(next, remainingReplies - 1);
+    }
+    value += branch.probability * result.value;
+    returnRate += branch.probability * result.returnRate;
+    exploredBranches += result.exploredBranches;
+  }
+  return { value, returnRate, exploredBranches };
+}
+
+function forecastMoveFromPublicInformation({
+  move,
+  hand,
+  handSizes,
+  voids,
+  player,
+  context,
+  playedTiles,
+}: {
+  move: Move;
+  hand: Tile[];
+  handSizes: number[];
+  voids: Set<number>[];
+  player: number;
+  context: StrategyContext;
+  playedTiles: Tile[];
+}): LookaheadForecast {
+  const remaining = hand.filter((tile) => tile.id !== move.tile.id);
+  if (!remaining.length) return { score: 1000, returnRate: 1, exploredBranches: 1, plies: 3 };
+  const nextHandSizes = [...handSizes];
+  nextHandSizes[player] -= 1;
+  const state: PublicSearchState = {
+    root: player,
+    current: (player + 1) % 3,
+    left: move.newLeft,
+    right: move.newRight,
+    passes: 0,
+    chainLength: context.chainLength + 1,
+    rootHand: remaining,
+    handSizes: nextHandSizes,
+    voids: voids.map((values) => new Set(values)),
+    unseenTiles: context.unseenTiles,
+    playedTiles: [...playedTiles, move.tile],
+  };
+  const replies = searchLikelyReplies(state, 2);
+  const immediate = moveHeuristic(move, hand, voids, player, handSizes, context);
+  return {
+    score: replies.value + immediate * 0.38,
+    returnRate: replies.returnRate,
+    exploredBranches: replies.exploredBranches,
+    plies: 3,
+  };
+}
+
+export function informationSafeMoveForecast(game: Game, move: Move, player = game.current): LookaheadForecast {
+  return forecastMoveFromPublicInformation({
+    move,
+    hand: game.hands[player],
+    handSizes: game.hands.map((hand) => hand.length),
+    voids: game.voids,
+    player,
+    context: strategyContextForGame(game, player),
+    playedTiles: game.chain,
+  });
+}
+
+export function chooseInformationSafeMove(game: Game, moves: Move[]): Move {
+  return moves
+    .map((move) => ({ move, forecast: informationSafeMoveForecast(game, move, game.current) }))
+    .sort((left, right) => right.forecast.score - left.forecast.score)[0].move;
+}
+
+function selectRolloutMove({
+  hand,
+  handSizes,
+  legal,
+  voids,
+  current,
+  context,
+  playedTiles,
+}: {
+  hand: Tile[];
+  handSizes: number[];
+  legal: Move[];
+  voids: Set<number>[];
+  current: number;
+  context: StrategyContext;
+  playedTiles: Tile[];
+}): Move {
+  if (legal.length === 1) return legal[0];
+  const candidates = legal.length <= 3
+    ? legal
+    : legal
+      .map((move) => ({ move, score: moveHeuristic(move, hand, voids, current, handSizes, context) }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, 3)
+      .map(({ move }) => move);
+  return candidates
+    .map((move) => ({ move, forecast: forecastMoveFromPublicInformation({
+      move,
+      hand,
+      handSizes,
+      voids,
+      player: current,
+      context,
+      playedTiles,
+    }) }))
+    .sort((left, right) => right.forecast.score - left.forecast.score)[0].move;
 }
 
 function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], perspective: number): RolloutOutcome {
@@ -957,12 +1250,6 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
   let chainLength = game.chain.length + 1;
 
   for (let turn = 0; turn < 80; turn += 1) {
-    const totalTiles = hands.reduce((sum, hand) => sum + hand.length, 0);
-    if (totalTiles <= 7) {
-      const solved = solveEndgame(hands, left, right, current, passes, new Map());
-      return { winner: solved.winner, reason: solved.reason, nextPlayerPassed, pips: hands.map(pipTotal) };
-    }
-
     const legal = legalMovesForEnds(hands[current], left, right);
     if (!legal.length) {
       if (firstTurn) nextPlayerPassed = true;
@@ -982,7 +1269,15 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
         player: current,
         playedTiles,
       });
-      const move = selectRolloutMove(hands, legal, voids, current, context);
+      const move = selectRolloutMove({
+        hand: hands[current],
+        handSizes: hands.map((hand) => hand.length),
+        legal,
+        voids,
+        current,
+        context,
+        playedTiles,
+      });
       passes = 0;
       hands[current] = hands[current].filter((tile) => tile.id !== move.tile.id);
       playedTiles.push(move.tile);
@@ -1001,10 +1296,24 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
   const moves = legalMovesFor(game.hands[perspective], game.chain);
   if (!moves.length) return [];
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
-  const samples = currentBeliefParticles(game, perspective, beliefState)
-    ?? buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
+  const persistentParticles = currentBeliefParticles(game, perspective, beliefState);
+  const samples = persistentParticles
+    ? representativeParticles(persistentParticles, interactiveSearchSamples)
+    : buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
   const handSizes = game.hands.map((hand) => hand.length);
   const context = strategyContextForGame(game, perspective);
+  const lookaheadByMove = new Map(moves.map((move) => [
+    `${move.tile.id}:${move.side}`,
+    forecastMoveFromPublicInformation({
+      move,
+      hand: game.hands[perspective],
+      handSizes,
+      voids: game.voids,
+      player: perspective,
+      context,
+      playedTiles: game.chain,
+    }),
+  ]));
 
   return moves.map((move) => {
     let weightedWins = 0;
@@ -1043,6 +1352,7 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
       winRate,
       margin,
       heuristic: moveHeuristic(move, game.hands[perspective], game.voids, perspective, handSizes, context),
+      lookahead: lookaheadByMove.get(`${move.tile.id}:${move.side}`)!,
       evidence: {
         nextPassRate: totalWeight ? weightedNextPasses / totalWeight * 100 : 0,
         blockedWinRate: totalWeight ? weightedBlockedWins / totalWeight * 100 : 0,
@@ -1051,14 +1361,14 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
         retainedEndMatches,
       },
     };
-  }).sort((a, b) => b.winRate - a.winRate || b.heuristic - a.heuristic);
+  }).sort((a, b) => b.winRate - a.winRate || b.lookahead.score - a.lookahead.score || b.heuristic - a.heuristic);
 }
 
 export function analyzeMoves(game: Game, sampleCount = 900, beliefState?: BeliefState): RatedMove[] {
   return analyzeMovesForPlayer(game, 0, sampleCount, beliefState);
 }
 
-export function chooseStrongMove(game: Game, moves: Move[], sampleCount = 500): Move {
+export function chooseStrongMove(game: Game, moves: Move[], sampleCount = interactiveSearchSamples): Move {
   if (moves.length === 1) return moves[0];
   const casual = chooseCasualMove(game, moves);
   const ranked = analyzeMovesForPlayer(game, game.current, sampleCount);
@@ -1078,8 +1388,12 @@ export function chooseBotMove(game: Game, moves: Move[], difficulty: Difficulty)
 export function reasonForMove(game: Game, move: RatedMove, comparison?: RatedMove): string {
   const phase = detectStrategicPhase(game, game.current);
   const passAdvantage = move.evidence.nextPassRate - (comparison?.evidence.nextPassRate ?? 0);
+  const returnAdvantage = move.lookahead.returnRate - (comparison?.lookahead.returnRate ?? 0);
+  if (move.lookahead.returnRate >= 0.55 && (!comparison || returnAdvantage >= 0.1)) {
+    return `Looking through likely replies from ${names[(game.current + 1) % 3]} and ${names[(game.current + 2) % 3]}, it preserved a legal way back onto the board about ${Math.round(move.lookahead.returnRate * 100)}% of the time${comparison ? `, ${Math.round(returnAdvantage * 100)} points more often than the comparison move` : ''}.`;
+  }
   if (move.evidence.nextPassRate >= 28 && (!comparison || passAdvantage >= 7)) {
-    return `Across the plausible hidden deals, it made ${names[(game.current + 1) % 3]} pass immediately about ${Math.round(move.evidence.nextPassRate)}% of the time${comparison ? `—${Math.round(passAdvantage)} points more often than the comparison move` : ''}.`;
+    return `Across the plausible hidden deals, it made ${names[(game.current + 1) % 3]} pass immediately about ${Math.round(move.evidence.nextPassRate)}% of the time${comparison ? `, ${Math.round(passAdvantage)} points more often than the comparison move` : ''}.`;
   }
   if (phase === 'block' && move.evidence.blockedWinRate >= 12) {
     return `The round looks close to blocking. This move won a blocked table in about ${Math.round(move.evidence.blockedWinRate)}% of the simulations and left an average of ${move.evidence.averagePipsWhenLosing.toFixed(1)} pips when it lost.`;

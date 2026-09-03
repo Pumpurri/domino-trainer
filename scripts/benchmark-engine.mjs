@@ -140,4 +140,4 @@ console.log(`- Brackets show matched-deal 95% bootstrap intervals using ${confid
 console.log('- Deals, rather than individual replays, are resampled so paired rounds are not incorrectly treated as independent.');
 console.log(`- ${workerCount} worker ${workerCount === 1 ? 'thread was' : 'threads were'} used; deal-level seeding makes the result reproducible across worker counts.`);
 console.log('- Strategic positions are explicit regression cases, not statistically sampled expert labels.');
-console.log(`- Production Strong currently uses 500 samples. This run used ${strongSamples}; pass --samples=500 for production-equivalent search.`);
+console.log(`- Interactive Strong uses 120 samples. This run used ${strongSamples}; pass --samples=120 for an interactive-equivalent search.`);
