@@ -228,6 +228,12 @@ V2 directly addresses the V1 failure modes:
 - Recommendation confidence and mistake confidence are separate. A move is labeled a mistake only when its estimated loss is practical, its widened lower bound clears the label threshold, and independent batches agree. Otherwise the label abstains.
 - Mistake thresholds are configurable independently from move ranking and stopping, so they can be calibrated without changing which move the analyzer recommends.
 
+Before opening the new held-out corpus, the release gate is locked to these requirements:
+
+- At least 90% of recommendations within one reference win-rate point, mean regret no higher than one point, at least 95% binary mistake-label agreement, no more than 2% false-positive mistake calls, and at least 90% repeat acceptability.
+- Compared with fixed 2,000 on the same corpus, within-one-point quality may be no more than 3 percentage points lower, mean regret may be no more than 0.05 point higher, and repeat acceptability may be no more than 5 percentage points lower.
+- At least 95% independent-run stability for the plausible-best set and at least 5% mean sample savings versus fixed 2,000.
+
 First run the distinct development corpus using no more than six worker threads:
 
 ```sh
@@ -242,3 +248,16 @@ caffeinate -i npm run benchmark:reliability:holdout
 ```
 
 Both long runs use atomic per-position checkpoints and support `-- --resume`. The held-out command evaluates 100 positions in each phase, three independent repetitions, fixed 120, 500, and 2,000-sample analyzers, V2 up to 2,000 samples, and an independent 5,000-sample reference. The live coach remains unchanged unless V2 passes every preregistered gate.
+
+### V2 development result
+
+The separate 80-position development study completed 20 positions in each phase with three independent trials per analyzer. V2 passed the expanded gate used above. This is tuning evidence, not the held-out release result.
+
+| Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | Repeat acceptable | Mean samples |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fixed 2,000 | 85.4% | 99.6% | 96.7% | 0.09 | 93.3% | 3.8% | 92.5% | 2,000 |
+| Adaptive V2 | 86.7% | 100.0% | 95.0% | 0.09 | 95.8% | 0.0% | 90.0% | 1,825 |
+
+V2 used 8.8% fewer samples, kept 100% plausible-best-set stability, abstained on 25.4% of coaching labels, and was correct on every non-abstained development label. It marked 78.3% of recommendations uncertain, showing that the confirmation rule is conservative. Label calibration selected and locked the existing policy unchanged: a 1.5-point practical lower bound, a 4-point minimum estimated loss, 75% positive batch agreement, and 50% practical-gap batch agreement.
+
+The run also exposed static worker tail imbalance when one unusually expensive opening remained behind a long queue. Reliability workers now take the next available position dynamically, preserving the six-worker cap while preventing idle workers when uneven positions remain.

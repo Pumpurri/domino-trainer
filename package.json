@@ -18,7 +18,7 @@
     "benchmark:reliability:develop": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --positions-per-phase=20 --repetitions=3 --budgets=120,500,2000 --adaptive-stages=120,250,500,1000,2000 --reference-samples=5000 --confidence-resamples=1000 --workers=6 --seed=mesa-quince-adaptive-v2-development --checkpoint=outputs/adaptive-v2-development-80.checkpoint --json=outputs/adaptive-v2-development-80.json --report=outputs/adaptive-v2-development-80.md",
     "benchmark:reliability:holdout": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --positions-per-phase=100 --repetitions=3 --budgets=120,500,2000 --adaptive-stages=120,250,500,1000,2000 --reference-samples=5000 --confidence-resamples=2000 --workers=6 --seed=mesa-quince-adaptive-v2-holdout-v1 --checkpoint=outputs/adaptive-v2-holdout-400.checkpoint --json=benchmarks/adaptive-v2-holdout-400.json --report=benchmarks/adaptive-v2-holdout-400.md",
     "benchmark:reliability:overnight": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --positions-per-phase=100 --repetitions=3 --budgets=120,500,2000 --adaptive-stages=120,250,500,1000,2000 --reference-samples=5000 --confidence-resamples=2000 --workers=6 --seed=mesa-quince-adaptive-v2-holdout-v1 --checkpoint=outputs/adaptive-v2-holdout-400.checkpoint --json=benchmarks/adaptive-v2-holdout-400.json --report=benchmarks/adaptive-v2-holdout-400.md",
-    "benchmark:reliability:calibrate": "node scripts/calibrate-adaptive-labels.mjs",
+    "benchmark:reliability:calibrate": "node --experimental-strip-types scripts/calibrate-adaptive-labels.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {

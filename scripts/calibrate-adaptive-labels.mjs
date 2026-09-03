@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { DEFAULT_ADAPTIVE_MISTAKE_POLICY } from '../app/adaptive-analysis.ts';
 
 function argument(name) {
   const prefix = `--${name}=`;
@@ -18,6 +19,16 @@ function percentage(value) {
 
 function policyKey(policy) {
   return `${policy.practicalGap}|${policy.minimumGap}|${policy.minimumBatchAgreement}|${policy.minimumPracticalBatchAgreement}`;
+}
+
+function distanceFromBaseline(policy) {
+  return Math.abs(policy.practicalGap - DEFAULT_ADAPTIVE_MISTAKE_POLICY.practicalGap)
+    + Math.abs(policy.minimumGap - DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumGap)
+    + Math.abs(policy.minimumBatchAgreement - DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumBatchAgreement)
+    + Math.abs(
+      policy.minimumPracticalBatchAgreement
+      - DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumPracticalBatchAgreement,
+    );
 }
 
 function assessTrial(trial, reference, policy) {
@@ -94,7 +105,7 @@ const ranked = (eligible.length ? eligible : unique).sort((left, right) => (
   || left.falsePositiveRate - right.falsePositiveRate
   || right.decidedAccuracy - left.decidedAccuracy
   || left.abstentionRate - right.abstentionRate
-  || left.policy.minimumGap - right.policy.minimumGap
+  || distanceFromBaseline(left.policy) - distanceFromBaseline(right.policy)
 ));
 const best = ranked[0];
 

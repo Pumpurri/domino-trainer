@@ -8,6 +8,7 @@ import {
 import {
   RELIABILITY_BRANCHING_BANDS,
   RELIABILITY_PHASES,
+  adaptiveReliabilityGate,
   collectDecisionCorpus,
   reliabilityGate,
   summarizeReliability,
@@ -96,9 +97,9 @@ function renderReport({ config, summary, budgets, adaptiveGate }) {
   const failedChecks = Object.entries(adaptiveGate.checks)
     .filter(([, passed]) => !passed)
     .map(([check]) => check);
-  const matchedComparison = summary.adaptive.withinOnePoint.mean >= comparison.withinOnePoint.mean
-    && summary.adaptive.meanRegret.mean <= comparison.meanRegret.mean
-    && summary.adaptive.repeatAcceptability.mean >= comparison.repeatAcceptability.mean;
+  const matchedComparison = adaptiveGate.checks.withinOnePointNoninferior
+    && adaptiveGate.checks.meanRegretNoninferior
+    && adaptiveGate.checks.repeatAcceptabilityNoninferior;
   const stageTotal = Object.values(summary.adaptive.stoppingStages).reduce((sum, count) => sum + count, 0);
   const stageRows = Object.entries(summary.adaptive.stoppingStages).map(([stage, count]) => (
     `| ${stage} | ${count} | ${stageTotal ? (count / stageTotal * 100).toFixed(1) : '0.0'}% |`
@@ -343,7 +344,13 @@ if (summary.reference.exactPositions) {
 }
 
 const fixedGates = Object.fromEntries(budgets.map((budget) => [budget, reliabilityGate(summary.overall[budget], summary.positions)]));
-const adaptiveGate = reliabilityGate(summary.adaptive, summary.positions);
+const adaptiveBaselineBudget = Math.max(...budgets);
+const adaptiveGate = adaptiveReliabilityGate(
+  summary.adaptive,
+  summary.positions,
+  summary.overall[adaptiveBaselineBudget],
+  adaptiveBaselineBudget,
+);
 console.log('\nGATE');
 budgets.forEach((budget) => console.log(`Fixed ${budget}: ${fixedGates[budget].passed ? 'PASS' : 'FAIL'}`));
 if (!fixedOnly) {

@@ -12,6 +12,7 @@ import { runMatchedBenchmarkParallel } from '../scripts/benchmark-parallel.mjs';
 import { strategicScenarios } from '../scripts/strategic-scenarios.mjs';
 import {
   RELIABILITY_PHASES,
+  adaptiveReliabilityGate,
   collectDecisionCorpus,
   evaluateReliabilityPosition,
   informationSafeBenchmarkGame,
@@ -80,6 +81,30 @@ test('reliability corpus is balanced across realistic strategic phases', () => {
   });
 });
 
+test('adaptive release gate requires absolute quality, baseline noninferiority, and sample savings', () => {
+  const metric = (mean) => ({ mean, low: mean, high: mean });
+  const adaptive = {
+    withinOnePoint: metric(0.94),
+    meanRegret: metric(0.12),
+    mistakeLabelAgreement: metric(0.96),
+    falsePositiveMistakes: metric(0.01),
+    repeatAcceptability: metric(0.91),
+    recommendationSetStability: metric(0.98),
+    samplesUsed: { mean: metric(900) },
+  };
+  const baseline = {
+    withinOnePoint: metric(0.95),
+    meanRegret: metric(0.1),
+    repeatAcceptability: metric(0.93),
+  };
+
+  assert.equal(adaptiveReliabilityGate(adaptive, 80, baseline, 1000).passed, true);
+  assert.equal(adaptiveReliabilityGate({
+    ...adaptive,
+    samplesUsed: { mean: metric(951) },
+  }, 80, baseline, 1000).passed, false);
+});
+
 test('reliability evaluation compares independent budgets against one reference', async () => {
   const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-evaluation-test' });
   const evaluated = await evaluateReliabilityPosition(position, {
@@ -91,8 +116,12 @@ test('reliability evaluation compares independent budgets against one reference'
   });
   assert.equal(evaluated.budgets[4].trials.length, 2);
   assert.equal(evaluated.budgets[8].trials.length, 2);
+  assert.ok(evaluated.reference.acceptableTopKeys.includes(evaluated.reference.topKey));
   assert.ok(evaluated.budgets[4].trials.every(({ regret }) => regret >= 0));
   assert.ok(evaluated.budgets[8].trials.every(({ intervalCoverage }) => typeof intervalCoverage === 'boolean'));
+  assert.ok(evaluated.adaptive.trials.every(({ recommendationKeys, mistakeConfidence }) => (
+    recommendationKeys.length >= 1 && ['clear', 'uncertain'].includes(mistakeConfidence)
+  )));
   const summary = summarizeReliability([evaluated], {
     budgets: [4, 8],
     seed: 'reliability-evaluation-test',
@@ -104,6 +133,8 @@ test('reliability evaluation compares independent budgets against one reference'
   assert.equal(Object.values(summary.branchingCounts).reduce((sum, count) => sum + count, 0), 1);
   assert.equal(summary.adaptive.trials, 2);
   assert.ok(summary.adaptive.samplesUsed.maximum <= 8);
+  assert.ok(summary.adaptive.recommendationSetSize.mean >= 1);
+  assert.ok(summary.adaptive.mistakeAbstentionRate.mean >= 0);
 });
 
 test('fixed and adaptive reliability analysis ignore changed real hidden hands', async () => {
@@ -125,10 +156,22 @@ test('fixed and adaptive reliability analysis ignore changed real hidden hands',
     evaluateReliabilityPosition(alternate, options),
   ]);
   const decisionSignature = (result) => ({
-    reference: [result.reference.topKey, result.reference.verdict, result.reference.confidentMistake],
+    reference: [
+      result.reference.topKey,
+      result.reference.acceptableTopKeys,
+      result.reference.verdict,
+      result.reference.confidentMistake,
+    ],
     fixed: result.budgets[4].trials.map(({ topKey, verdict, confidentMistake }) => [topKey, verdict, confidentMistake]),
-    adaptive: result.adaptive.trials.map(({ topKey, verdict, recommendationConfidence, samplesUsed }) => (
-      [topKey, verdict, recommendationConfidence, samplesUsed]
+    adaptive: result.adaptive.trials.map(({
+      topKey,
+      verdict,
+      recommendationConfidence,
+      recommendationKeys,
+      mistakeConfidence,
+      samplesUsed,
+    }) => (
+      [topKey, verdict, recommendationConfidence, recommendationKeys, mistakeConfidence, samplesUsed]
     )),
   });
   assert.deepEqual(decisionSignature(first), decisionSignature(second));

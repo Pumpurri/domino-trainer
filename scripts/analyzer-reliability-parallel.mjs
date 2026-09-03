@@ -32,10 +32,16 @@ function runBatch(positions, options, onProgress, onResult) {
 
 export async function evaluateReliabilityParallel({ positions, options, workerCount, onProgress, onResult }) {
   const count = workerCount ?? reliabilityWorkerCount(positions.length);
-  const batches = Array.from({ length: count }, () => []);
-  positions.forEach((position, index) => batches[index % count].push(position));
-  const nested = await Promise.all(batches.filter((batch) => batch.length).map((batch) => (
-    runBatch(batch, options, onProgress, onResult)
-  )));
-  return nested.flat().sort((left, right) => left.id.localeCompare(right.id));
+  const results = [];
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(count, positions.length) }, async () => {
+    while (nextIndex < positions.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const [result] = await runBatch([positions[index]], options, onProgress, onResult);
+      results.push(result);
+    }
+  });
+  await Promise.all(workers);
+  return results.sort((left, right) => left.id.localeCompare(right.id));
 }

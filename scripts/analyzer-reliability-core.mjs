@@ -485,6 +485,19 @@ export function reliabilityGate(row, positions) {
   return { passed: Object.values(checks).every(Boolean), checks };
 }
 
+export function adaptiveReliabilityGate(row, positions, fixedBaseline, baselineBudget) {
+  const absolute = reliabilityGate(row, positions).checks;
+  const checks = {
+    ...absolute,
+    withinOnePointNoninferior: row.withinOnePoint.mean >= fixedBaseline.withinOnePoint.mean - 0.03,
+    meanRegretNoninferior: row.meanRegret.mean <= fixedBaseline.meanRegret.mean + 0.05,
+    repeatAcceptabilityNoninferior: row.repeatAcceptability.mean >= fixedBaseline.repeatAcceptability.mean - 0.05,
+    recommendationSetStability: row.recommendationSetStability.mean >= 0.95,
+    sampleSavings: row.samplesUsed.mean.mean <= baselineBudget * 0.95,
+  };
+  return { passed: Object.values(checks).every(Boolean), checks };
+}
+
 export function summarizeReliability(positionResults, {
   budgets = [120, 500, 1000, 2000],
   seed = 'mesa-quince-reliability-v1',
