@@ -4,7 +4,7 @@ The benchmark compares three policies:
 
 - `random` chooses an arbitrary legal move and provides a low-skill baseline.
 - `casual` uses the engine's phase-aware move policy.
-- `strong` samples hidden hands and simulates the remaining round with a public-information three-turn policy at every future decision.
+- `strong` samples hidden hands and uses information-set Monte Carlo tree search to compare legal moves.
 
 ## Phase-aware policy
 
@@ -17,11 +17,13 @@ The policy identifies four strategic situations and changes its priorities accor
 
 Only a pass creates a certain void. Other tile choices influence hidden-hand probabilities but do not prove that a player lacks a number.
 
-## Information-safe three-turn search
+## Information Set Monte Carlo Tree Search
 
-For every choice with multiple legal moves, the acting player looks through the candidate move and likely replies from the next two seats. The leaf evaluation checks whether that player is likely to have a legal route back onto the board when the turn returns.
+Each search iteration draws one plausible hidden deal from the current weighted belief particles. All iterations contribute to one shared tree of information sets, so evidence from different possible deals accumulates on the same public decisions.
 
-Each simulated player receives only its own sampled hand plus public information: the chain, played tiles, hand sizes, and proven voids from passes. Likely replies are estimated from the public unseen pool. The rollout policy never receives either opponent's sampled tile identities, including in the late game.
+An information-set key contains the acting player's own hand plus public information: the chain ends, played tiles, hand sizes, turn, passes, and proven voids. It never contains either opponent's hidden tile identities. This restriction applies to tree selection and to the phase-aware policy used after a new branch is expanded.
+
+The tree can extend to twelve turns. UCT selection concentrates visits on moves that have performed well while continuing to test less-visited alternatives. Every root move receives a minimum sample, then promising moves receive more visits. When the two leaders remain inside their combined uncertainty range, the search adds up to 50% more iterations and restricts that extra budget to the leading pair.
 
 ## Matched schedule
 
@@ -58,7 +60,7 @@ Run the same 120-sample search used by the interactive Strong opponent:
 npm run benchmark -- --samples=120 --json=outputs/benchmark-production.json
 ```
 
-The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for full-round rollouts. This preserves a broad belief pool while keeping an interactive decision responsive. The three-turn forecast itself evaluates every legal user move.
+The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for tree iterations. This preserves a broad belief pool while keeping an interactive decision responsive.
 
 The main controls are:
 
@@ -82,3 +84,15 @@ Equivalent environment variables begin with `MESA_BENCH_`; see `scripts/benchmar
 - Results on explicit strategic regression positions.
 
 The designed positions are transparent regression cases for agreed principles. They are not a substitute for a future expert-labeled dataset.
+
+## Current standard reference
+
+The current information-set search was evaluated on 120 matched deals, producing 2,160 balanced rounds with 80 search samples per Strong decision.
+
+| Strategy | Round win rate | Average end pips | Blocked win rate |
+| --- | ---: | ---: | ---: |
+| Random | 19.0% [17.5, 20.6] | 22.89 [22.06, 23.71] | 17.5% [15.4, 19.5] |
+| Casual | 36.9% [35.0, 38.7] | 17.28 [16.52, 18.06] | 35.8% [33.6, 37.9] |
+| Strong | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] |
+
+Strong selected the expected move in all six designed strategic positions. These figures are a regression reference for this implementation, not a claim of optimal domino play.

@@ -59,6 +59,16 @@ export type LookaheadForecast = {
   exploredBranches: number;
   plies: 3;
 };
+export type InformationSetSearchEvidence = {
+  visits: number;
+  averageUtility: number;
+  informationSets: number;
+  deepestPly: number;
+  uniqueDeals: number;
+  baseIterations: number;
+  extraIterations: number;
+  closeDecision: boolean;
+};
 export type RatedMove = Move & {
   samples: number;
   effectiveSamples: number;
@@ -66,6 +76,7 @@ export type RatedMove = Move & {
   margin: number;
   heuristic: number;
   lookahead: LookaheadForecast;
+  treeSearch: InformationSetSearchEvidence;
   evidence: MoveEvidence;
 };
 export type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
@@ -624,7 +635,8 @@ function buildParticles(game: Game, perspective: number, count: number, seed: st
   const random = seededRandom(seed);
   const samples: WeightedSample[] = [];
   let attempts = 0;
-  while (samples.length < count && attempts < count * 5) {
+  const maximumAttempts = Math.max(240, count * 8);
+  while (samples.length < count && attempts < maximumAttempts) {
     attempts += 1;
     const hands = samplePossibleHands(game, perspective, random);
     if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands, perspective) });
@@ -1292,6 +1304,452 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
   return { winner: null, reason: 'cutoff', nextPlayerPassed, pips: hands.map(pipTotal) };
 }
 
+type SearchSimulationState = {
+  hands: Tile[][];
+  left: number | null;
+  right: number | null;
+  current: number;
+  passes: number;
+  chainLength: number;
+  voids: Set<number>[];
+  playedTiles: Tile[];
+};
+
+type PublicSimulationView = {
+  left: number | null;
+  right: number | null;
+  current: number;
+  passes: number;
+  chainLength: number;
+  handSizes: number[];
+  voids: Set<number>[];
+  playedTiles: Tile[];
+  observerHand: Tile[];
+};
+
+type TreeActionStats = {
+  visits: number;
+  availability: number;
+  utility: number[];
+  prior: number;
+};
+
+type InformationSetNode = {
+  visits: number;
+  actions: Map<string, TreeActionStats>;
+};
+
+type RootOutcomeStats = {
+  visits: number;
+  wins: number;
+  utility: number;
+  nextPasses: number;
+  blockedWins: number;
+  emptyWins: number;
+  losingPips: number;
+  losses: number;
+};
+
+type InformationSetSearchResult = {
+  outcomes: Map<string, RootOutcomeStats>;
+  informationSets: number;
+  deepestPly: number;
+  uniqueDeals: number;
+  baseIterations: number;
+  extraIterations: number;
+  closeDecision: boolean;
+};
+
+function moveKey(move: Move): string {
+  return `${move.tile.id}:${move.side}`;
+}
+
+function newRootOutcomeStats(): RootOutcomeStats {
+  return {
+    visits: 0,
+    wins: 0,
+    utility: 0,
+    nextPasses: 0,
+    blockedWins: 0,
+    emptyWins: 0,
+    losingPips: 0,
+    losses: 0,
+  };
+}
+
+function simulationState(game: Game, hands: Tile[][]): SearchSimulationState {
+  const [left, right] = endsOf(game.chain);
+  return {
+    hands: hands.map((hand) => [...hand]),
+    left,
+    right,
+    current: game.current,
+    passes: game.consecutivePasses,
+    chainLength: game.chain.length,
+    voids: game.voids.map((values) => new Set(values)),
+    playedTiles: [...game.chain],
+  };
+}
+
+function publicSimulationView(state: SearchSimulationState, observer: number): PublicSimulationView {
+  return {
+    left: state.left,
+    right: state.right,
+    current: state.current,
+    passes: state.passes,
+    chainLength: state.chainLength,
+    handSizes: state.hands.map((hand) => hand.length),
+    voids: state.voids,
+    playedTiles: state.playedTiles,
+    observerHand: state.hands[observer],
+  };
+}
+
+function informationSetKey(view: PublicSimulationView): string {
+  const voidSignature = view.voids
+    .map((values) => [...values].sort((left, right) => left - right).join('.'))
+    .join('/');
+  const playedSignature = view.playedTiles.map((tile) => tile.id).sort().join('.');
+  return [
+    view.current,
+    view.left ?? 'open',
+    view.right ?? 'open',
+    view.passes,
+    view.handSizes.join('.'),
+    voidSignature,
+    playedSignature,
+    handSignature(view.observerHand),
+  ].join('|');
+}
+
+function strategyContextForSimulation(view: PublicSimulationView, actorHand: Tile[]): StrategyContext {
+  return strategyContextForState({
+    hand: actorHand,
+    handSizes: view.handSizes,
+    chainLength: view.chainLength,
+    consecutivePasses: view.passes,
+    left: view.left,
+    right: view.right,
+    voids: view.voids,
+    player: view.current,
+    playedTiles: view.playedTiles,
+  });
+}
+
+function informationSafePrior(view: PublicSimulationView, actorHand: Tile[], move: Move): number {
+  const context = strategyContextForSimulation(view, actorHand);
+  const score = moveHeuristic(move, actorHand, view.voids, view.current, view.handSizes, context);
+  return 0.5 + Math.tanh(score / 12) * 0.5;
+}
+
+function chooseTreeMove({
+  node,
+  legal,
+  view,
+  actorHand,
+  allowedActions,
+}: {
+  node: InformationSetNode;
+  legal: Move[];
+  view: PublicSimulationView;
+  actorHand: Tile[];
+  allowedActions?: Set<string>;
+}): { move: Move; stats: TreeActionStats; expanded: boolean } {
+  const candidates = allowedActions
+    ? legal.filter((move) => allowedActions.has(moveKey(move)))
+    : legal;
+  const available = candidates.length ? candidates : legal;
+  const entries = available.map((move) => {
+    const key = moveKey(move);
+    let stats = node.actions.get(key);
+    if (!stats) {
+      stats = { visits: 0, availability: 0, utility: [0, 0, 0], prior: informationSafePrior(view, actorHand, move) };
+      node.actions.set(key, stats);
+    }
+    stats.availability += 1;
+    return { move, stats };
+  });
+  const unexplored = entries.filter(({ stats }) => stats.visits === 0);
+  if (unexplored.length) {
+    const selected = unexplored.sort((left, right) => right.stats.prior - left.stats.prior || moveKey(left.move).localeCompare(moveKey(right.move)))[0];
+    return { ...selected, expanded: true };
+  }
+
+  const actor = view.current;
+  const selected = entries
+    .map((entry) => {
+      const mean = entry.stats.utility[actor] / entry.stats.visits;
+      const exploration = 0.78 * Math.sqrt(Math.log(entry.stats.availability + 1) / entry.stats.visits);
+      const progressiveBias = 0.22 * entry.stats.prior / (entry.stats.visits + 1);
+      return { ...entry, value: mean + exploration + progressiveBias };
+    })
+    .sort((left, right) => right.value - left.value || moveKey(left.move).localeCompare(moveKey(right.move)))[0];
+  return { move: selected.move, stats: selected.stats, expanded: false };
+}
+
+function applySimulationMove(state: SearchSimulationState, move: Move): RolloutOutcome | null {
+  const actor = state.current;
+  state.hands[actor] = state.hands[actor].filter((tile) => tile.id !== move.tile.id);
+  state.left = move.newLeft;
+  state.right = move.newRight;
+  state.passes = 0;
+  state.chainLength += 1;
+  state.playedTiles.push(move.tile);
+  if (!state.hands[actor].length) {
+    return { winner: actor, reason: 'empty', nextPlayerPassed: false, pips: state.hands.map(pipTotal) };
+  }
+  state.current = (actor + 1) % 3;
+  return null;
+}
+
+function applySimulationPass(state: SearchSimulationState): RolloutOutcome | null {
+  const actor = state.current;
+  if (state.left !== null) state.voids[actor].add(state.left);
+  if (state.right !== null) state.voids[actor].add(state.right);
+  state.passes += 1;
+  if (state.passes >= 3) {
+    return { winner: blockedWinner(state.hands), reason: 'blocked', nextPlayerPassed: false, pips: state.hands.map(pipTotal) };
+  }
+  state.current = (actor + 1) % 3;
+  return null;
+}
+
+function choosePlayoutMove(view: PublicSimulationView, actorHand: Tile[], legal: Move[], random: () => number): Move {
+  if (legal.length === 1) return legal[0];
+  const context = strategyContextForSimulation(view, actorHand);
+  const ranked = legal
+    .map((move) => ({ move, score: moveHeuristic(move, actorHand, view.voids, view.current, view.handSizes, context) }))
+    .sort((left, right) => right.score - left.score || moveKey(left.move).localeCompare(moveKey(right.move)));
+  if (random() < 0.84) return ranked[0].move;
+  const alternatives = ranked.slice(0, Math.min(3, ranked.length));
+  const maximum = alternatives[0].score;
+  const weights = alternatives.map(({ score }) => Math.exp((score - maximum) / 2.2));
+  const target = random() * weights.reduce((sum, weight) => sum + weight, 0);
+  let cumulative = 0;
+  for (let index = 0; index < alternatives.length; index += 1) {
+    cumulative += weights[index];
+    if (target <= cumulative) return alternatives[index].move;
+  }
+  return alternatives[0].move;
+}
+
+function finishPlayout(state: SearchSimulationState, random: () => number): RolloutOutcome {
+  for (let turn = 0; turn < 80; turn += 1) {
+    const actorHand = state.hands[state.current];
+    const legal = legalMovesForEnds(actorHand, state.left, state.right);
+    const outcome = legal.length
+      ? applySimulationMove(state, choosePlayoutMove(publicSimulationView(state, state.current), actorHand, legal, random))
+      : applySimulationPass(state);
+    if (outcome) return outcome;
+  }
+  return { winner: null, reason: 'cutoff', nextPlayerPassed: false, pips: state.hands.map(pipTotal) };
+}
+
+function outcomeUtility(outcome: RolloutOutcome): number[] {
+  if (outcome.winner === null) return [0, 0, 0];
+  const highestPips = Math.max(1, ...outcome.pips);
+  return [0, 1, 2].map((player) => outcome.winner === player
+    ? 1
+    : Math.max(0, 0.08 * (1 - outcome.pips[player] / highestPips)));
+}
+
+function systematicParticleSequence(particles: BeliefParticle[], count: number): BeliefParticle[] {
+  if (!particles.length || count <= 0) return [];
+  const normalized = normalizeParticleWeights(particles);
+  const cumulative: number[] = [];
+  let total = 0;
+  normalized.forEach((particle) => {
+    total += particle.weight;
+    cumulative.push(total);
+  });
+  const step = total / count;
+  let target = step / 2;
+  let particleIndex = 0;
+  return Array.from({ length: count }, () => {
+    while (particleIndex < cumulative.length - 1 && target > cumulative[particleIndex]) particleIndex += 1;
+    const selected = normalized[particleIndex];
+    target += step;
+    return selected;
+  });
+}
+
+function runInformationSetIteration({
+  game,
+  perspective,
+  particle,
+  tree,
+  rootOutcomes,
+  random,
+  allowedRootActions,
+}: {
+  game: Game;
+  perspective: number;
+  particle: BeliefParticle;
+  tree: Map<string, InformationSetNode>;
+  rootOutcomes: Map<string, RootOutcomeStats>;
+  random: () => number;
+  allowedRootActions?: Set<string>;
+}): number {
+  const state = simulationState(game, particle.hands);
+  const path: Array<{ node: InformationSetNode; action: TreeActionStats }> = [];
+  let rootAction: string | null = null;
+  let nextPlayerPassed = false;
+  let outcome: RolloutOutcome | null = null;
+  let deepestPly = 0;
+
+  for (let ply = 0; ply < 12 && !outcome; ply += 1) {
+    deepestPly = ply + 1;
+    const actor = state.current;
+    const actorHand = state.hands[actor];
+    const legal = legalMovesForEnds(actorHand, state.left, state.right);
+    if (!legal.length) {
+      if (rootAction && actor === (perspective + 1) % 3 && path.length === 1) nextPlayerPassed = true;
+      outcome = applySimulationPass(state);
+      continue;
+    }
+
+    const view = publicSimulationView(state, actor);
+    const key = informationSetKey(view);
+    let node = tree.get(key);
+    if (!node) {
+      node = { visits: 0, actions: new Map() };
+      tree.set(key, node);
+    }
+    const atRoot = rootAction === null && actor === perspective;
+    const selected = chooseTreeMove({
+      node,
+      legal,
+      view,
+      actorHand,
+      allowedActions: atRoot ? allowedRootActions : undefined,
+    });
+    path.push({ node, action: selected.stats });
+    if (atRoot) rootAction = moveKey(selected.move);
+    outcome = applySimulationMove(state, selected.move);
+    if (atRoot && !outcome) {
+      nextPlayerPassed = legalMovesForEnds(state.hands[state.current], state.left, state.right).length === 0;
+    }
+    if (selected.expanded && !outcome) outcome = finishPlayout(state, random);
+  }
+  if (!outcome) outcome = finishPlayout(state, random);
+
+  const utilities = outcomeUtility(outcome);
+  path.forEach(({ node, action }) => {
+    node.visits += 1;
+    action.visits += 1;
+    action.utility = action.utility.map((value, player) => value + utilities[player]);
+  });
+
+  if (rootAction) {
+    const stats = rootOutcomes.get(rootAction)!;
+    stats.visits += 1;
+    stats.utility += utilities[perspective];
+    if (outcome.winner === perspective) {
+      stats.wins += 1;
+      if (outcome.reason === 'blocked') stats.blockedWins += 1;
+      if (outcome.reason === 'empty') stats.emptyWins += 1;
+    } else {
+      stats.losingPips += outcome.pips[perspective];
+      stats.losses += 1;
+    }
+    if (nextPlayerPassed) stats.nextPasses += 1;
+  }
+  return deepestPly;
+}
+
+function closeRootDecision(moves: Move[], outcomes: Map<string, RootOutcomeStats>): { close: boolean; leaders: Set<string> } {
+  const ranked = moves
+    .map((move) => {
+      const stats = outcomes.get(moveKey(move))!;
+      const rate = stats.visits ? stats.wins / stats.visits : 0;
+      const utility = stats.visits ? stats.utility / stats.visits : 0;
+      const standardError = Math.sqrt(Math.max(0.0025, rate * (1 - rate)) / Math.max(1, stats.visits));
+      return { key: moveKey(move), rate, utility, standardError };
+    })
+    .sort((left, right) => right.utility - left.utility || right.rate - left.rate || left.key.localeCompare(right.key));
+  if (ranked.length < 2) return { close: false, leaders: new Set(ranked.map(({ key }) => key)) };
+  const [best, second] = ranked;
+  const uncertainty = 1.35 * Math.sqrt(best.standardError ** 2 + second.standardError ** 2);
+  return {
+    close: best.utility - second.utility <= Math.max(0.035, uncertainty),
+    leaders: new Set([best.key, second.key]),
+  };
+}
+
+function informationSetMonteCarloSearch(
+  game: Game,
+  perspective: number,
+  moves: Move[],
+  particles: BeliefParticle[],
+  stateKey: string,
+): InformationSetSearchResult {
+  const tree = new Map<string, InformationSetNode>();
+  const rootOutcomes = new Map(moves.map((move) => [moveKey(move), newRootOutcomeStats()]));
+  if (!particles.length) {
+    return {
+      outcomes: rootOutcomes,
+      informationSets: 0,
+      deepestPly: 0,
+      uniqueDeals: 0,
+      baseIterations: 0,
+      extraIterations: 0,
+      closeDecision: false,
+    };
+  }
+  const baseIterations = Math.max(moves.length * 8, particles.length * moves.length);
+  const maximumExtraIterations = Math.ceil(baseIterations * 0.5);
+  const sequence = systematicParticleSequence(particles, baseIterations + maximumExtraIterations);
+  const random = seededRandom(`ismcts|${stateKey}`);
+  const minimumRootVisits = Math.max(6, Math.floor(particles.length * 0.25));
+  let deepestPly = 0;
+
+  for (let iteration = 0; iteration < baseIterations; iteration += 1) {
+    const underSampled = new Set(moves
+      .filter((move) => rootOutcomes.get(moveKey(move))!.visits < minimumRootVisits)
+      .map(moveKey));
+    deepestPly = Math.max(deepestPly, runInformationSetIteration({
+      game,
+      perspective,
+      particle: sequence[iteration],
+      tree,
+      rootOutcomes,
+      random,
+      allowedRootActions: underSampled.size ? underSampled : undefined,
+    }));
+  }
+
+  let decision = closeRootDecision(moves, rootOutcomes);
+  let extraIterations = 0;
+  const batchSize = Math.max(8, moves.length * 2);
+  while (decision.close && extraIterations < maximumExtraIterations) {
+    const count = Math.min(batchSize, maximumExtraIterations - extraIterations);
+    for (let offset = 0; offset < count; offset += 1) {
+      const iteration = baseIterations + extraIterations + offset;
+      deepestPly = Math.max(deepestPly, runInformationSetIteration({
+        game,
+        perspective,
+        particle: sequence[iteration],
+        tree,
+        rootOutcomes,
+        random,
+        allowedRootActions: decision.leaders,
+      }));
+    }
+    extraIterations += count;
+    decision = closeRootDecision(moves, rootOutcomes);
+  }
+
+  return {
+    outcomes: rootOutcomes,
+    informationSets: tree.size,
+    deepestPly,
+    uniqueDeals: new Set(sequence.slice(0, baseIterations + extraIterations).map((particle) => particleDealSignature(particle, perspective))).size,
+    baseIterations,
+    extraIterations,
+    closeDecision: extraIterations > 0,
+  };
+}
+
 function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: number, beliefState?: BeliefState): RatedMove[] {
   const moves = legalMovesFor(game.hands[perspective], game.chain);
   if (!moves.length) return [];
@@ -1314,32 +1772,12 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
       playedTiles: game.chain,
     }),
   ]));
+  const search = informationSetMonteCarloSearch(game, perspective, moves, samples, stateKey);
 
   return moves.map((move) => {
-    let weightedWins = 0;
-    let totalWeight = 0;
-    let squaredWeight = 0;
-    let weightedNextPasses = 0;
-    let weightedBlockedWins = 0;
-    let weightedEmptyWins = 0;
-    let weightedLossPips = 0;
-    let lossWeight = 0;
-    samples.forEach((sample) => {
-      const outcome = rolloutWinner(game, move, sample.hands, perspective);
-      totalWeight += sample.weight;
-      squaredWeight += sample.weight * sample.weight;
-      if (outcome.winner === perspective) {
-        weightedWins += sample.weight;
-        if (outcome.reason === 'blocked') weightedBlockedWins += sample.weight;
-        if (outcome.reason === 'empty') weightedEmptyWins += sample.weight;
-      } else {
-        weightedLossPips += outcome.pips[perspective] * sample.weight;
-        lossWeight += sample.weight;
-      }
-      if (outcome.nextPlayerPassed) weightedNextPasses += sample.weight;
-    });
-    const winRate = totalWeight ? weightedWins / totalWeight * 100 : 0;
-    const effectiveSamples = squaredWeight ? totalWeight * totalWeight / squaredWeight : 0;
+    const outcome = search.outcomes.get(moveKey(move))!;
+    const winRate = outcome.visits ? outcome.wins / outcome.visits * 100 : 0;
+    const effectiveSamples = outcome.visits;
     const proportion = winRate / 100;
     const margin = effectiveSamples ? 1.96 * Math.sqrt(proportion * (1 - proportion) / effectiveSamples) * 100 : 100;
     const ends = uniqueEnds(move);
@@ -1347,21 +1785,31 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
     const retainedEndMatches = ends.reduce((sum, value) => sum + remaining.filter((tile) => tile.a === value || tile.b === value).length, 0);
     return {
       ...move,
-      samples: samples.length,
+      samples: outcome.visits,
       effectiveSamples,
       winRate,
       margin,
       heuristic: moveHeuristic(move, game.hands[perspective], game.voids, perspective, handSizes, context),
       lookahead: lookaheadByMove.get(`${move.tile.id}:${move.side}`)!,
+      treeSearch: {
+        visits: outcome.visits,
+        averageUtility: outcome.visits ? outcome.utility / outcome.visits : 0,
+        informationSets: search.informationSets,
+        deepestPly: search.deepestPly,
+        uniqueDeals: search.uniqueDeals,
+        baseIterations: search.baseIterations,
+        extraIterations: search.extraIterations,
+        closeDecision: search.closeDecision,
+      },
       evidence: {
-        nextPassRate: totalWeight ? weightedNextPasses / totalWeight * 100 : 0,
-        blockedWinRate: totalWeight ? weightedBlockedWins / totalWeight * 100 : 0,
-        emptyWinRate: totalWeight ? weightedEmptyWins / totalWeight * 100 : 0,
-        averagePipsWhenLosing: lossWeight ? weightedLossPips / lossWeight : 0,
+        nextPassRate: outcome.visits ? outcome.nextPasses / outcome.visits * 100 : 0,
+        blockedWinRate: outcome.visits ? outcome.blockedWins / outcome.visits * 100 : 0,
+        emptyWinRate: outcome.visits ? outcome.emptyWins / outcome.visits * 100 : 0,
+        averagePipsWhenLosing: outcome.losses ? outcome.losingPips / outcome.losses : 0,
         retainedEndMatches,
       },
     };
-  }).sort((a, b) => b.winRate - a.winRate || b.lookahead.score - a.lookahead.score || b.heuristic - a.heuristic);
+  }).sort((a, b) => b.winRate - a.winRate || b.treeSearch.averageUtility - a.treeSearch.averageUtility || b.lookahead.score - a.lookahead.score || b.heuristic - a.heuristic);
 }
 
 export function analyzeMoves(game: Game, sampleCount = 900, beliefState?: BeliefState): RatedMove[] {
@@ -1375,9 +1823,11 @@ export function chooseStrongMove(game: Game, moves: Move[], sampleCount = intera
   const best = ranked[0];
   const casualResult = ranked.find((candidate) => candidate.tile.id === casual.tile.id && candidate.side === casual.side)
     ?? ranked.find((candidate) => candidate.tile.id === casual.tile.id);
-  if (!best || !casualResult) return casual;
-  const uncertaintyGuard = Math.max(4, Math.sqrt(best.margin ** 2 + casualResult.margin ** 2) * 0.45);
-  return best.winRate - casualResult.winRate > uncertaintyGuard ? best : casual;
+  if (!best || !casualResult || moveKey(best) === moveKey(casualResult)) return best ?? casual;
+  if (casualResult.evidence.nextPassRate >= 99 && best.evidence.nextPassRate < 99) return casual;
+  const combinedMargin = Math.sqrt(best.margin ** 2 + casualResult.margin ** 2);
+  const requiredAdvantage = Math.max(10, combinedMargin * 0.5);
+  return best.winRate - casualResult.winRate > requiredAdvantage ? best : casual;
 }
 
 export function chooseBotMove(game: Game, moves: Move[], difficulty: Difficulty): Move {
@@ -1394,6 +1844,9 @@ export function reasonForMove(game: Game, move: RatedMove, comparison?: RatedMov
   }
   if (move.evidence.nextPassRate >= 28 && (!comparison || passAdvantage >= 7)) {
     return `Across the plausible hidden deals, it made ${names[(game.current + 1) % 3]} pass immediately about ${Math.round(move.evidence.nextPassRate)}% of the time${comparison ? `, ${Math.round(passAdvantage)} points more often than the comparison move` : ''}.`;
+  }
+  if (comparison && move.treeSearch.closeDecision && move.treeSearch.extraIterations > 0 && Math.abs(move.winRate - comparison.winRate) < 10) {
+    return `The leading lines stayed close, so the search spent ${move.treeSearch.extraIterations} additional simulations comparing them. It explored ${move.treeSearch.informationSets} public decision states as deep as ${move.treeSearch.deepestPly} turns and estimated this move at ${Math.round(move.winRate)}% versus ${Math.round(comparison.winRate)}% for the comparison move.`;
   }
   if (phase === 'block' && move.evidence.blockedWinRate >= 12) {
     return `The round looks close to blocking. This move won a blocked table in about ${Math.round(move.evidence.blockedWinRate)}% of the simulations and left an average of ${move.evidence.averagePipsWhenLosing.toFixed(1)} pips when it lost.`;

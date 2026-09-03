@@ -524,7 +524,7 @@ export default function Home() {
       : sameAsBest
         ? explainSmartMove(game, chosen, comparison)
         : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
-    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} plausible deals`;
+    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} focused visits across ${chosen.treeSearch.uniqueDeals} deals`;
     setGame(applyMove(game, move));
     setSelectedId(null);
     setCoach({ kind: 'feedback', rating, title, body, stat, tone });
@@ -550,7 +550,7 @@ export default function Home() {
         ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
         : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
       body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
-      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} plausible deals`,
+      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} focused visits across ${best.treeSearch.uniqueDeals} deals`,
     });
   }
 
@@ -684,7 +684,7 @@ export default function Home() {
             <span>Opponent level</span>
             <div><button className={difficulty === 'casual' ? 'active' : ''} type="button" onClick={() => setDifficulty('casual')}>Casual</button><button className={difficulty === 'strong' ? 'active' : ''} type="button" onClick={() => setDifficulty('strong')}>Strong</button></div>
           </div>
-          <div className="coach-footer"><span>Coach method</span><b><i /> 900 beliefs + 3-turn search</b></div>
+          <div className="coach-footer"><span>Coach method</span><b><i /> 900 beliefs + ISMCTS</b></div>
         </aside>
       </section>
     </main>

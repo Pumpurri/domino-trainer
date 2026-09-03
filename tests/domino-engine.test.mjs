@@ -27,6 +27,10 @@ function tile(a, b) {
   return { id: `${Math.min(a, b)}-${Math.max(a, b)}`, a: Math.min(a, b), b: Math.max(a, b) };
 }
 
+function moveKey(move) {
+  return `${move.tile.id}:${move.side}`;
+}
+
 function playingGame(overrides = {}) {
   return {
     ...initialGame(),
@@ -94,7 +98,15 @@ test('the analyzer does not change when the real hidden tile identities change',
   const deck = fullSet().filter(({ id }) => !['1-5', '8-9', '2-2', 'board'].includes(id));
   const base = playingGame({ hands: [[tile(1, 5), tile(8, 9), tile(2, 2)], deck.slice(0, 4), deck.slice(4, 8)] });
   const alternate = { ...base, hands: [base.hands[0], deck.slice(12, 16), deck.slice(20, 24)] };
-  const summarize = (game) => analyzeMoves(game, 70).map((move) => [move.tile.id, move.side, move.winRate, move.evidence.nextPassRate]);
+  const summarize = (game) => analyzeMoves(game, 70).map((move) => [
+    move.tile.id,
+    move.side,
+    move.winRate,
+    move.evidence.nextPassRate,
+    move.samples,
+    move.treeSearch.informationSets,
+    move.treeSearch.deepestPly,
+  ]);
   assert.deepEqual(summarize(base), summarize(alternate));
 });
 
@@ -111,7 +123,10 @@ test('persistent beliefs ignore the real hidden tile identities and survive unch
 
   assert.deepEqual(first.particles, second.particles);
   assert.strictEqual(updateBeliefState(first, base, 0, 140), first);
-  assert.ok(analyzeMoves(base, 999, first).every(({ samples }) => samples === Math.min(120, first.particles.length)));
+  const ranked = analyzeMoves(base, 999, first);
+  const search = ranked[0].treeSearch;
+  assert.equal(ranked.reduce((sum, move) => sum + move.samples, 0), search.baseIterations + search.extraIterations);
+  assert.equal(search.uniqueDeals, Math.min(120, first.particles.length));
 });
 
 test('a pass eliminates impossible particles and replenishes a thin pool', () => {
@@ -256,6 +271,42 @@ test('three-turn search cannot see real opponent tile identities', () => {
   };
 
   assert.deepEqual(summarize(base), summarize(alternate));
+});
+
+test('information-set tree search grows beyond three turns and focuses visits', () => {
+  const ownHand = [tile(1, 5), tile(1, 7), tile(1, 9), tile(3, 9), tile(5, 8), tile(2, 2), tile(4, 6), tile(0, 3), tile(6, 8), tile(7, 7)];
+  const available = fullSet().filter(({ id }) => !ownHand.some((candidate) => candidate.id === id));
+  const game = playingGame({
+    hands: [ownHand, available.slice(0, 10), available.slice(10, 20)],
+    chain: [placed('board', 1, 9, 2)],
+  });
+  const ranked = analyzeMoves(game, 80);
+  const search = ranked[0].treeSearch;
+  const visits = ranked.map(({ samples }) => samples);
+
+  assert.ok(search.deepestPly > 3);
+  assert.ok(search.informationSets > ranked.length);
+  assert.ok(search.uniqueDeals > 1);
+  assert.equal(visits.reduce((sum, count) => sum + count, 0), search.baseIterations + search.extraIterations);
+  assert.ok(Math.max(...visits) > Math.min(...visits));
+});
+
+test('close information-set decisions receive an additional simulation budget', () => {
+  const ownHand = [tile(1, 5), tile(1, 7), tile(1, 9), tile(3, 9), tile(5, 8), tile(2, 2), tile(4, 6), tile(0, 3), tile(6, 8), tile(7, 7)];
+  const available = fullSet().filter(({ id }) => !ownHand.some((candidate) => candidate.id === id));
+  const game = playingGame({
+    hands: [ownHand, available.slice(0, 10), available.slice(10, 20)],
+    chain: [placed('board', 1, 9, 2)],
+  });
+  const first = analyzeMoves(game, 80);
+  const second = analyzeMoves(game, 80);
+
+  assert.equal(first[0].treeSearch.closeDecision, true);
+  assert.ok(first[0].treeSearch.extraIterations > 0);
+  assert.deepEqual(
+    first.map((move) => [moveKey(move), move.winRate, move.samples, move.treeSearch.averageUtility]),
+    second.map((move) => [moveKey(move), move.winRate, move.samples, move.treeSearch.averageUtility]),
+  );
 });
 
 test('the exact endgame solver finds a forced final-tile win', () => {
