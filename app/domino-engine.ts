@@ -144,6 +144,18 @@ export type DecisionOption = {
   pairedWins: number[];
   pairedWeights: number[];
 };
+export type DecisionPublicState = {
+  chain: PlacedTile[];
+  starter: number;
+  voids: number[][];
+  consecutivePasses: number;
+  events: PublicEvent[];
+};
+export type BeliefProbabilityForecast = {
+  player: number;
+  value: number;
+  probability: number;
+};
 export type DecisionRecord = {
   id: string;
   round: number;
@@ -159,7 +171,17 @@ export type DecisionRecord = {
   inferredEvidence: string[];
   beliefs: PlayerBelief[];
   beliefConfidence: BeliefConfidence;
+  publicState: DecisionPublicState;
+  probabilityForecasts: BeliefProbabilityForecast[];
+  styleProfiles: OpponentStyleProfile[];
   recommendationReason: string;
+};
+export type CalibrationPoint = {
+  player: number;
+  label: string;
+  forecast: number;
+  observed: number;
+  confidence: BeliefConfidence | StyleConfidence;
 };
 export type DecisionVerdict = 'best' | 'close' | 'slight' | 'mistake' | 'big-mistake';
 export type DecisionReview = {
@@ -184,7 +206,24 @@ export type RoundReview = {
   bestDecision: DecisionReview | null;
   closeCalls: number;
   beliefChecks: { correct: number; total: number };
+  calibration: {
+    belief: CalibrationPoint[];
+    style: CalibrationPoint[];
+  };
   opponentStartingHands: { player: number; tiles: Tile[] }[];
+};
+export type PracticeReply = {
+  player: number;
+  kind: 'play' | 'pass';
+  tile?: Tile;
+  side?: Side;
+};
+export type PracticeReplay = {
+  dealCode: string;
+  replies: PracticeReply[];
+  returnedToUser: boolean;
+  roundEnded: boolean;
+  finalEnds: [number | null, number | null];
 };
 export type AnalysisOptions = {
   representativeLimit?: number;
@@ -2530,6 +2569,34 @@ function optionFromRatedMove(move: RatedMove): DecisionOption {
   };
 }
 
+function clonePublicEvent(event: PublicEvent): PublicEvent {
+  if (event.kind === 'pass') return { ...event, endsBefore: [...event.endsBefore] };
+  return {
+    ...event,
+    tile: { ...event.tile },
+    endsBefore: [...event.endsBefore],
+    nextVoids: [...event.nextVoids],
+  };
+}
+
+function beliefProbabilityForecasts(
+  beliefState: BeliefState | undefined,
+  perspective: number,
+): BeliefProbabilityForecast[] {
+  if (!beliefState?.particles.length || beliefState.perspective !== perspective) return [];
+  const totalWeight = beliefState.particles.reduce((sum, particle) => sum + particle.weight, 0);
+  if (!totalWeight) return [];
+  return [0, 1, 2].filter((player) => player !== perspective).flatMap((player) => (
+    Array.from({ length: 10 }, (_, value) => ({
+      player,
+      value,
+      probability: beliefState.particles.reduce((sum, particle) => (
+        sum + (particle.hands[player].some((tile) => matchesValue(tile, value)) ? particle.weight : 0)
+      ), 0) / totalWeight,
+    }))
+  ));
+}
+
 export function createDecisionRecord(
   game: Game,
   ranked: RatedMove[],
@@ -2571,7 +2638,87 @@ export function createDecisionRecord(
       softReads: belief.softReads.map((read) => ({ ...read })),
     })),
     beliefConfidence: beliefState?.diagnostics.confidence ?? 'low',
+    publicState: {
+      chain: game.chain.map((tile) => ({ ...tile })),
+      starter: game.starter,
+      voids: game.voids.map((values) => [...values].sort((left, right) => left - right)),
+      consecutivePasses: game.consecutivePasses,
+      events: game.events.map(clonePublicEvent),
+    },
+    probabilityForecasts: beliefProbabilityForecasts(beliefState, 0),
+    styleProfiles: styles.map((style) => ({ ...style })),
     recommendationReason: reasonForMove(game, best, chosen),
+  };
+}
+
+function practiceGameFromRecord(record: DecisionRecord): Game {
+  return {
+    phase: 'playing',
+    scores: [0, 0, 0],
+    round: record.round,
+    hands: record.handSizes.map((size, player) => player === 0
+      ? record.hand.map((tile) => ({ ...tile }))
+      : Array.from({ length: size }, (_, index) => ({ id: `practice-hidden-${player}-${index}`, a: -1, b: -1 }))),
+    chain: record.publicState.chain.map((tile) => ({ ...tile })),
+    current: 0,
+    starter: record.publicState.starter,
+    voids: record.publicState.voids.map((values) => new Set(values)),
+    consecutivePasses: record.publicState.consecutivePasses,
+    result: null,
+    starterDraw: null,
+    history: [],
+    lastAction: null,
+    events: record.publicState.events.map(clonePublicEvent),
+  };
+}
+
+export function createPracticeGame(record: DecisionRecord, attempt = 0): Game | null {
+  const safeGame = practiceGameFromRecord(record);
+  const seed = `mistake-lab|${record.id}|${attempt}`;
+  const particles = buildParticles(safeGame, 0, 48, seed, record.styleProfiles);
+  if (!particles.length) return null;
+  const random = seededRandom(`${seed}|weighted-pick`);
+  const totalWeight = particles.reduce((sum, particle) => sum + particle.weight, 0);
+  let target = random() * totalWeight;
+  const selected = particles.find((particle) => {
+    target -= particle.weight;
+    return target <= 0;
+  }) ?? particles[particles.length - 1];
+  return {
+    ...safeGame,
+    hands: selected.hands.map((hand) => hand.map((tile) => ({ ...tile }))),
+  };
+}
+
+export function simulatePracticeReplies(
+  record: DecisionRecord,
+  selectedKey: string,
+  attempt = 0,
+): PracticeReplay | null {
+  let game = createPracticeGame(record, attempt);
+  if (!game) return null;
+  const selected = legalMovesFor(game.hands[0], game.chain).find((move) => moveKey(move) === selectedKey);
+  if (!selected) return null;
+  game = applyMove(game, selected);
+  const replies: PracticeReply[] = [];
+  while (game.phase === 'playing' && game.current !== 0 && replies.length < 2) {
+    const player = game.current;
+    const legal = legalMovesFor(game.hands[player], game.chain);
+    if (!legal.length) {
+      replies.push({ player, kind: 'pass' });
+      game = applyPass(game);
+      continue;
+    }
+    const move = chooseCasualMove(game, legal);
+    replies.push({ player, kind: 'play', tile: { ...move.tile }, side: move.side });
+    game = applyMove(game, move);
+  }
+  return {
+    dealCode: `P${attempt + 1}`,
+    replies,
+    returnedToUser: game.phase === 'playing' && game.current === 0,
+    roundEnded: game.phase !== 'playing',
+    finalEnds: endsOf(game.chain),
   };
 }
 
@@ -2688,6 +2835,52 @@ function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview
   };
 }
 
+function beliefCalibrationPoints(finalGame: Game, records: DecisionRecord[]): CalibrationPoint[] {
+  return records.flatMap((record) => {
+    const actualHands = actualHandsAtDecision(finalGame, record.eventCount);
+    return record.probabilityForecasts.map((forecast) => ({
+      player: forecast.player,
+      label: `holds-${forecast.value}`,
+      forecast: forecast.probability,
+      observed: actualHands[forecast.player].some((tile) => matchesValue(tile, forecast.value)) ? 1 : 0,
+      confidence: record.beliefConfidence,
+    }));
+  });
+}
+
+function styleCalibrationPoints(finalGame: Game, records: DecisionRecord[]): CalibrationPoint[] {
+  const points: CalibrationPoint[] = [];
+  const usedEvents = new Set<string>();
+  [...records].sort((left, right) => left.eventCount - right.eventCount).forEach((record) => {
+    record.styleProfiles.forEach((style) => {
+      if (style.observedChoices < 2) return;
+      const eventIndex = finalGame.events.findIndex((event, index) => (
+        index > record.eventCount
+        && event.kind === 'play'
+        && event.player === style.player
+        && event.endsBefore[0] !== null
+      ));
+      if (eventIndex < 0 || usedEvents.has(`${style.player}-${eventIndex}`)) return;
+      const actualHands = actualHandsAtDecision(finalGame, eventIndex);
+      const observation = styleObservationForEvent(finalGame, eventIndex, actualHands);
+      if (!observation) return;
+      usedEvents.add(`${style.player}-${eventIndex}`);
+      const candidates: Array<[string, number, number | null]> = [
+        ['high-pip choice', style.highPipTendency, observation.highPips],
+        ['double choice', style.doubleTendency, observation.double],
+        ['end control', style.controlTendency, observation.control],
+        ['blocking choice', style.blockTendency, observation.block],
+        ['strategic consistency', style.strategicConsistency, observation.strategic],
+      ];
+      candidates.forEach(([label, forecast, observed]) => {
+        if (observed === null) return;
+        points.push({ player: style.player, label, forecast, observed, confidence: style.confidence });
+      });
+    });
+  });
+  return points;
+}
+
 export function buildRoundReview(finalGame: Game, records: DecisionRecord[]): RoundReview {
   const decisions = records
     .filter((record) => record.round === finalGame.round)
@@ -2709,6 +2902,10 @@ export function buildRoundReview(finalGame: Game, records: DecisionRecord[]): Ro
       correct: total.correct + decision.beliefChecks.correct,
       total: total.total + decision.beliefChecks.total,
     }), { correct: 0, total: 0 }),
+    calibration: {
+      belief: beliefCalibrationPoints(finalGame, records),
+      style: styleCalibrationPoints(finalGame, records),
+    },
     opponentStartingHands: [1, 2].map((player) => ({
       player,
       tiles: [...startingHands[player]].sort((left, right) => left.a - right.a || left.b - right.b),

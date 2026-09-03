@@ -12,15 +12,35 @@ import {
   estimateBeliefs as estimateSmartBeliefs,
   mergeMoveAnalyses,
   reasonForMove as explainSmartMove,
+  simulatePracticeReplies,
   updateBeliefState as updateSmartBeliefState,
   updateOpponentStyles,
   type BeliefState,
   type DecisionRecord,
+  type DecisionReview,
   type Difficulty,
   type OpponentStyleProfile,
+  type PracticeReplay,
   type RatedMove as SmartRatedMove,
   type RoundReview,
 } from './domino-engine';
+import {
+  calibrationAdjustedBeliefState,
+  calibrationAdjustedStyles,
+  createEmptyTrainingProgress,
+  decisionCategory,
+  opponentArchetype,
+  parseTrainingProgress,
+  progressSummary,
+  recordDrillAttempt,
+  recordRoundProgress,
+  serializeTrainingDataset,
+  targetedDrills,
+  trainingCategoryLabel,
+  trainingStorageKey,
+  type TargetedDrill,
+  type TrainingProgress,
+} from './training';
 
 type Tile = { id: string; a: number; b: number };
 type Side = 'left' | 'right';
@@ -76,6 +96,10 @@ type Coach =
     evidence?: { known: string; inferred: string; simulated: string; uncertain: string };
   };
 type SnakeRow = { tiles: PlacedTile[]; turn: PlacedTile | null };
+type PracticeResult = { selectedKey: string; correct: boolean; replay: PracticeReplay | null };
+type PracticeState =
+  | { source: 'mistake'; decision: DecisionReview; attempt: number; result: PracticeResult | null }
+  | { source: 'drill'; drill: TargetedDrill; attempt: number; result: PracticeResult | null };
 
 const names = ['You', 'Rosa', 'Tino'];
 const beliefParticleCount = 900;
@@ -264,10 +288,12 @@ function verdictLabel(verdict: RoundReview['decisions'][number]['verdict']): str
 
 function RoundReviewPanel({
   review,
+  onPractice,
   onContinue,
   continueLabel,
 }: {
   review: RoundReview;
+  onPractice: (decision: DecisionReview) => void;
   onContinue: () => void;
   continueLabel: string;
 }) {
@@ -288,7 +314,7 @@ function RoundReviewPanel({
       <article className={`review-highlight ${review.biggestMistake ? 'mistake' : 'clean'}`}>
         <span>Largest lesson</span>
         {review.biggestMistake
-          ? <><h3>{reviewMoveLabel(review.biggestMistake.best)} was stronger</h3><p>You played {reviewMoveLabel(review.biggestMistake.chosen)}. The paired estimate favored the alternative by {Math.round(review.biggestMistake.winRateGap)} percentage points.</p></>
+          ? <><h3>{reviewMoveLabel(review.biggestMistake.best)} was stronger</h3><p>You played {reviewMoveLabel(review.biggestMistake.chosen)}. The paired estimate favored the alternative by {Math.round(review.biggestMistake.winRateGap)} percentage points.</p><button className="practice-link" type="button" onClick={() => onPractice(review.biggestMistake!)}>Practice this decision</button></>
           : <><h3>No confident mistake found</h3><p>Your decisions were either the leading choice or too close for the simulations to judge honestly.</p></>}
       </article>
       <article className="review-highlight clean">
@@ -312,6 +338,7 @@ function RoundReviewPanel({
           <p><strong>Simulated</strong>{decision.simulated}</p>
           <p><strong>Uncertain</strong>{decision.uncertainty}</p>
           <p className="revealed-evidence"><strong>Revealed afterward</strong>{decision.revealed}</p>
+          {decision.record.options.length > 1 && <button className="practice-link evidence-practice" type="button" onClick={() => onPractice(decision)}>Practice this decision</button>}
         </div>
       </details>)}
       {!review.decisions.length && <div className="review-empty"><h3>No decisions to review</h3><p>You never had a voluntary legal choice during this round.</p></div>}
@@ -323,6 +350,172 @@ function RoundReviewPanel({
       <small>These tiles were never available to the live recommendation engine.</small>
     </div>
     <button className="deal-button" type="button" onClick={onContinue}>{continueLabel}</button>
+  </div>;
+}
+
+function practiceMoveLabel(move: { tile: Tile; side: Side }): string {
+  return `${move.tile.a}–${move.tile.b} on the ${move.side}`;
+}
+
+function PracticeBoard({ chain }: { chain: PlacedTile[] }) {
+  const [left, right] = endsOf(chain);
+  const rows = makeSnakeRows(chain);
+  return <div className="practice-board">
+    <div className="snake-board" aria-label="Practice position">
+      {rows.map((row, rowIndex) => {
+        const direction = rowIndex % 2 === 0 ? 'right' : 'left';
+        const isLast = rowIndex === rows.length - 1;
+        const endsOnTurn = isLast && row.turn !== null;
+        return <div className={`snake-row toward-${direction} ${endsOnTurn ? 'ends-on-turn' : ''}`} key={`practice-row-${rowIndex}`}>
+          {rowIndex === 0 && left !== null && <span className="edge-number start-edge">{left}</span>}
+          {row.tiles.map((placed) => <BoardDomino key={placed.id} tile={placed} reversed={direction === 'left'} justPlayed={false} />)}
+          {isLast && !endsOnTurn && right !== null && <span className="edge-number end-edge">{right}</span>}
+          {row.turn && <span className="snake-turn"><BoardDomino tile={row.turn} vertical justPlayed={false} />{endsOnTurn && right !== null && <span className="edge-number turn-end">{right}</span>}</span>}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
+function PracticeOverlay({
+  practice,
+  onChoose,
+  onRetry,
+  onClose,
+}: {
+  practice: PracticeState;
+  onChoose: (key: string) => void;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const isMistake = practice.source === 'mistake';
+  const options = isMistake ? practice.decision.record.options : practice.drill.options;
+  const hand = isMistake ? practice.decision.record.hand : practice.drill.hand;
+  const chain = isMistake ? practice.decision.record.publicState.chain : practice.drill.chain;
+  const title = isMistake ? 'Replay your decision' : practice.drill.title;
+  const goal = isMistake
+    ? `Round ${practice.decision.record.round}, ${practice.decision.record.phase} game. Choose again using only what you knew then.`
+    : practice.drill.goal;
+  const knownRead = isMistake
+    ? practice.decision.known
+    : practice.drill.knownRead;
+  const explanation = isMistake
+    ? `${practice.decision.simulated} ${practice.decision.record.recommendationReason}`
+    : practice.drill.explanation;
+  return <div className="training-scrim">
+    <section className="practice-overlay" aria-modal="true" role="dialog">
+      <div className="training-overlay-header">
+        <div><span className="setup-kicker">{isMistake ? `Mistake Lab · plausible table P${practice.attempt + 1}` : `Targeted drill · ${trainingCategoryLabel(practice.drill.category)}`}</span><h2>{title}</h2><p>{goal}</p></div>
+        <button className="overlay-close" type="button" onClick={onClose} aria-label="Close practice">×</button>
+      </div>
+      <div className="practice-layout">
+        <div className="practice-table-card">
+          <PracticeBoard chain={chain} />
+          <div className="practice-read"><span>Known at the table</span><p>{knownRead}</p></div>
+          <div className="practice-hand"><span>Your hand then</span><div>{hand.map((held) => <Domino key={held.id} tile={held} disabled />)}</div></div>
+        </div>
+        <aside className="practice-choice-card">
+          <span className="eyebrow">Make the decision</span>
+          <h3>What would you play now?</h3>
+          <div className="practice-options">
+            {options.map((option) => <button
+              className={practice.result?.selectedKey === `${option.tile.id}:${option.side}` ? 'selected' : ''}
+              disabled={practice.result !== null}
+              key={`${option.tile.id}:${option.side}`}
+              type="button"
+              onClick={() => onChoose(`${option.tile.id}:${option.side}`)}
+            >{practiceMoveLabel(option)}<span>→</span></button>)}
+          </div>
+          {!practice.result && <p className="practice-privacy">{isMistake ? 'The opponents’ hands were regenerated from the same public evidence. Their real hands from the round are not reused.' : 'This drill isolates one repeatable table skill.'}</p>}
+          {practice.result && <div className={`practice-result ${practice.result.correct ? 'correct' : 'incorrect'}`}>
+            <span>{practice.result.correct ? 'Correct decision' : 'Try to see the stronger route'}</span>
+            <h3>{practiceMoveLabel(options.find((option) => `${option.tile.id}:${option.side}` === (isMistake ? practice.decision.record.bestKey : practice.drill.bestKey))!)}</h3>
+            <p>{explanation}</p>
+            {practice.result.replay && <div className="reply-line">
+              <b>One likely response on table P{practice.attempt + 1}</b>
+              {practice.result.replay.replies.length
+                ? practice.result.replay.replies.map((reply, index) => <span key={`${reply.player}-${index}`}>{names[reply.player]} {reply.kind === 'pass' ? 'passes' : `plays ${reply.tile!.a}–${reply.tile!.b} on the ${reply.side}`}</span>)
+                : <span>The round ends before an opponent replies.</span>}
+              <em>{practice.result.replay.returnedToUser ? `You return to ${practice.result.replay.finalEnds[0]} or ${practice.result.replay.finalEnds[1]}.` : practice.result.replay.roundEnded ? 'The regenerated line ends the round.' : 'The line did not return within two replies.'}</em>
+            </div>}
+            <button className="practice-retry" type="button" onClick={onRetry}>{isMistake ? 'Try another hidden deal' : 'Practice it again'}</button>
+          </div>}
+        </aside>
+      </div>
+    </section>
+  </div>;
+}
+
+function calibrationRatingLabel(rating: ReturnType<typeof progressSummary>['beliefCalibration']['rating']): string {
+  if (rating === 'well-calibrated') return 'Tracking reality well';
+  if (rating === 'mixed') return 'Mixed calibration';
+  if (rating === 'needs-work') return 'Confidence needs correction';
+  return 'Collecting evidence';
+}
+
+function TrainingCenter({
+  progress,
+  onStartDrill,
+  onExport,
+  onClose,
+}: {
+  progress: TrainingProgress;
+  onStartDrill: (drill: TargetedDrill) => void;
+  onExport: () => void;
+  onClose: () => void;
+}) {
+  const summary = progressSummary(progress);
+  return <div className="training-scrim">
+    <section className="training-overlay" aria-modal="true" role="dialog">
+      <div className="training-overlay-header">
+        <div><span className="setup-kicker">Mesa training center</span><h2>Your game, measured over time</h2><p>Progress stays on this laptop. The tracker scores decisions, not lucky wins or unlucky deals.</p></div>
+        <button className="overlay-close" type="button" onClick={onClose} aria-label="Close training center">×</button>
+      </div>
+
+      <div className="progress-hero">
+        <article><b>{summary.rounds}</b><span>rounds reviewed</span></article>
+        <article><b>{summary.decisions}</b><span>decisions measured</span></article>
+        <article><b>{summary.averageLoss.toFixed(1)}</b><span>avg estimated points lost per round</span></article>
+        <article><b>{summary.masteredDrills}/6</b><span>drills mastered</span></article>
+      </div>
+
+      <div className="training-grid">
+        <section className="training-card trend-card">
+          <span className="training-card-label">Decision trend</span><h3>Last 10, 25, and 50 rounds</h3>
+          <div className="window-list">{summary.windows.map((window) => <div key={window.size}><b>{window.size}</b><span>{window.averageLoss === null ? 'No rounds yet' : `${window.averageLoss.toFixed(1)} points lost per round`}</span><em>{window.changeFromPrevious === null ? 'Need another full window for a comparison' : window.changeFromPrevious < 0 ? `${Math.abs(window.changeFromPrevious).toFixed(1)} better than the prior ${window.size}` : window.changeFromPrevious > 0 ? `${window.changeFromPrevious.toFixed(1)} worse than the prior ${window.size}` : 'Even with the prior window'}</em></div>)}</div>
+        </section>
+        <section className="training-card phase-card">
+          <span className="training-card-label">Phase report</span><h3>Where mistakes happen</h3>
+          <div className="phase-table">{summary.phases.map((phase) => <div key={phase.phase}><b>{phase.phase}</b><span>{phase.mistakes}/{phase.decisions} misses</span><em>{phase.averageLoss.toFixed(1)} avg loss</em></div>)}</div>
+          <p>{summary.weaknesses[0] ? `Most common leak: ${trainingCategoryLabel(summary.weaknesses[0].category)} (${summary.weaknesses[0].count}).` : 'No repeated leak has been identified yet.'}</p>
+        </section>
+      </div>
+
+      <section className="training-card drill-section">
+        <div><span className="training-card-label">Targeted practice</span><h3>Six situations strong players recognize quickly</h3></div>
+        <div className="drill-grid">{targetedDrills.map((drill) => {
+          const attempts = progress.drills.find((item) => item.id === `drill:${drill.id}`);
+          return <article key={drill.id}><span>{trainingCategoryLabel(drill.category)}</span><h4>{drill.title}</h4><p>{drill.goal}</p><small>{attempts ? `${attempts.correct}/${attempts.attempts} correct · best streak ${attempts.bestStreak}` : 'Not practiced yet'}</small><button type="button" onClick={() => onStartDrill(drill)}>Practice</button></article>;
+        })}</div>
+      </section>
+
+      <div className="training-grid calibration-grid">
+        <section className="training-card calibration-card">
+          <span className="training-card-label">Belief calibration</span><h3>{calibrationRatingLabel(summary.beliefCalibration.rating)}</h3><p>{summary.beliefCalibration.samples} probability checks · {summary.beliefCalibration.meanSquaredError === null ? 'no error score yet' : `${summary.beliefCalibration.meanSquaredError.toFixed(3)} squared error, lower is better`}</p>
+          <div className="calibration-buckets">{summary.beliefCalibration.buckets.map((bucket) => <div key={bucket.label}><b>{bucket.label}</b><span>{bucket.count ? `${Math.round(bucket.observedRate * 100)}% actual` : 'No samples'}</span><em>{bucket.count} checks</em></div>)}</div>
+        </section>
+        <section className="training-card calibration-card">
+          <span className="training-card-label">Opponent-style calibration</span><h3>{calibrationRatingLabel(summary.styleCalibration.rating)}</h3><p>{summary.styleCalibration.samples} tendency checks · {summary.styleCalibration.meanSquaredError === null ? 'no error score yet' : `${summary.styleCalibration.meanSquaredError.toFixed(3)} squared error, lower is better`}</p>
+          <div className="player-calibration">{summary.styleCalibrationByPlayer.map(({ player, summary: playerSummary }) => <span key={player}><b>{names[player]}</b>{playerSummary.samples ? `${playerSummary.samples} checks · ${playerSummary.meanSquaredError!.toFixed(3)} error` : 'Collecting choices'}</span>)}</div>
+          <small>The tracker reduces its practical influence when observations are thin. These checks compare earlier style expectations with later revealed legal choices.</small>
+        </section>
+      </div>
+
+      <section className="dataset-card">
+        <div><span className="training-card-label">Information-safe dataset</span><h3>{progress.examples.length} decision examples ready</h3><p>Exports public actions, your hand, model estimates, and labels. Opponent hidden hands and sleeping tiles are excluded.</p></div>
+        <button type="button" disabled={!progress.examples.length} onClick={onExport}>Export JSON</button>
+      </section>
+    </section>
   </div>;
 }
 
@@ -345,6 +538,11 @@ export default function Home() {
   const [decisionRecords, setDecisionRecords] = useState<DecisionRecord[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [trainingOpen, setTrainingOpen] = useState(false);
+  const [practiceState, setPracticeState] = useState<PracticeState | null>(null);
+  const [trainingProgress, setTrainingProgress] = useState<TrainingProgress>(createEmptyTrainingProgress);
+  const [trainingReady, setTrainingReady] = useState(false);
+  const dayId = useRef('');
   const analyzerWorkers = useRef<Worker[]>([]);
   const analysisSequence = useRef(0);
   const analysisRequests = useRef(new Map<number, {
@@ -357,6 +555,7 @@ export default function Home() {
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
   const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
+  const lifetimeTrainingSummary = useMemo(() => progressSummary(trainingProgress), [trainingProgress]);
   const currentBeliefState = useMemo(() => {
     if (game.phase === 'pickStarter' || game.phase === 'starterDrawn' || !game.hands[0].length) return null;
     return updateSmartBeliefState(beliefState, game, 0, beliefParticleCount, styleProfiles);
@@ -366,12 +565,42 @@ export default function Home() {
     game,
     currentBeliefState ?? undefined,
   ), [currentBeliefState, game, styleProfiles]);
+  const analysisBeliefState = useMemo(() => calibrationAdjustedBeliefState(
+    currentBeliefState,
+    lifetimeTrainingSummary.beliefCalibration,
+  ), [currentBeliefState, lifetimeTrainingSummary.beliefCalibration]);
+  const analysisStyleProfiles = useMemo(() => calibrationAdjustedStyles(
+    currentStyleProfiles,
+    lifetimeTrainingSummary.styleCalibration,
+  ), [currentStyleProfiles, lifetimeTrainingSummary.styleCalibration]);
   const beliefs = useMemo(() => game.phase === 'playing'
-    ? estimateSmartBeliefs(game, 0, beliefParticleCount, currentBeliefState ?? undefined, currentStyleProfiles)
-    : [], [currentBeliefState, currentStyleProfiles, game]);
-  const roundReview = (game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result
-    ? buildRoundReview(game, decisionRecords)
-    : null;
+    ? estimateSmartBeliefs(game, 0, beliefParticleCount, analysisBeliefState ?? undefined, analysisStyleProfiles)
+    : [], [analysisBeliefState, analysisStyleProfiles, game]);
+  const roundReview = useMemo(() => (
+    (game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result
+      ? buildRoundReview(game, decisionRecords)
+      : null
+  ), [decisionRecords, game]);
+
+  useEffect(() => {
+    dayId.current = `day-${Date.now().toString(36)}-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
+    // Progress is intentionally device-local and never sent to the Site server.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTrainingProgress(parseTrainingProgress(window.localStorage.getItem(trainingStorageKey)));
+    setTrainingReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!trainingReady) return;
+    window.localStorage.setItem(trainingStorageKey, JSON.stringify(trainingProgress));
+  }, [trainingProgress, trainingReady]);
+
+  useEffect(() => {
+    if (!trainingReady || !roundReview || !dayId.current) return;
+    const roundKey = `${dayId.current}:round-${roundReview.round}`;
+    // A stable round key makes this idempotent even when the report rerenders.
+    setTrainingProgress((current) => recordRoundProgress(current, roundReview, roundKey));
+  }, [roundReview, trainingReady]);
 
   useEffect(() => {
     // The persistent particle pool advances only after public game events change.
@@ -411,7 +640,7 @@ export default function Home() {
   }, []);
 
   function analysisKey(): string {
-    const styleKey = currentStyleProfiles.map((style) => [
+    const styleKey = analysisStyleProfiles.map((style) => [
       style.player,
       style.observedChoices,
       style.highPipTendency.toFixed(3),
@@ -439,12 +668,12 @@ export default function Home() {
             id,
             game: safeGame,
             sampleCount: beliefParticleCount,
-            beliefState: currentBeliefState ?? undefined,
-            styles: currentStyleProfiles,
+            beliefState: analysisBeliefState ?? undefined,
+            styles: analysisStyleProfiles,
             options: { representativeLimit: 120, shardIndex, shardCount: workers.length },
           });
         }))))
-        : analyzeSmartMoves(safeGame, beliefParticleCount, currentBeliefState ?? undefined, currentStyleProfiles);
+        : analyzeSmartMoves(safeGame, beliefParticleCount, analysisBeliefState ?? undefined, analysisStyleProfiles);
       analysisCache.current.set(key, ranked);
       if (analysisCache.current.size > 12) analysisCache.current.delete(analysisCache.current.keys().next().value!);
       return ranked;
@@ -454,7 +683,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
+    if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback' || trainingOpen || practiceState) return;
     const timer = window.setTimeout(() => {
       const moves = legalMovesFor(game.hands[game.current], game.chain);
       if (!moves.length) {
@@ -475,7 +704,7 @@ export default function Home() {
       }
     }, 1750);
     return () => window.clearTimeout(timer);
-  }, [game, coach.kind, difficulty]);
+  }, [game, coach.kind, difficulty, practiceState, trainingOpen]);
 
   function chooseStarterRule(choice: 'high' | 'low') {
     const starterDraw = drawForStarter(choice);
@@ -493,6 +722,7 @@ export default function Home() {
   }
 
   function resetDay() {
+    dayId.current = `day-${Date.now().toString(36)}-${Math.floor(Math.random() * 1_000_000).toString(36)}`;
     setGame(initialGame());
     setCoach({ kind: 'intro' });
     setSelectedId(null);
@@ -500,7 +730,52 @@ export default function Home() {
     setStyleProfiles(createOpponentStyles());
     setDecisionRecords([]);
     setReviewOpen(false);
+    setTrainingOpen(false);
+    setPracticeState(null);
     analysisCache.current.clear();
+  }
+
+  function practiceDecision(decision: DecisionReview) {
+    setPracticeState({ source: 'mistake', decision, attempt: 0, result: null });
+  }
+
+  function startTargetedDrill(drill: TargetedDrill) {
+    setPracticeState({ source: 'drill', drill, attempt: 0, result: null });
+  }
+
+  function choosePracticeMove(selectedKey: string) {
+    if (!practiceState || practiceState.result) return;
+    const bestKey = practiceState.source === 'mistake'
+      ? practiceState.decision.record.bestKey
+      : practiceState.drill.bestKey;
+    const correct = selectedKey === bestKey;
+    const replay = practiceState.source === 'mistake'
+      ? simulatePracticeReplies(practiceState.decision.record, selectedKey, practiceState.attempt)
+      : null;
+    const category = practiceState.source === 'mistake'
+      ? decisionCategory(practiceState.decision)
+      : practiceState.drill.category;
+    const practiceId = practiceState.source === 'mistake'
+      ? `mistake:${practiceState.decision.record.phase}:${practiceState.decision.record.ends.join('-')}:${practiceState.decision.record.hand.map((tile) => tile.id).join(',')}`
+      : `drill:${practiceState.drill.id}`;
+    setTrainingProgress((current) => recordDrillAttempt(current, practiceId, category, correct));
+    setPracticeState({ ...practiceState, result: { selectedKey, correct, replay } });
+  }
+
+  function retryPractice() {
+    setPracticeState((current) => current ? { ...current, attempt: current.attempt + 1, result: null } : null);
+  }
+
+  function exportTrainingData() {
+    const serialized = serializeTrainingDataset(trainingProgress);
+    const url = window.URL.createObjectURL(new Blob([serialized], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `mesa-quince-training-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
   }
 
   async function playUserMove(move: Move) {
@@ -528,8 +803,8 @@ export default function Home() {
         ranked,
         move,
         beliefs,
-        currentBeliefState ?? undefined,
-        currentStyleProfiles,
+        analysisBeliefState ?? undefined,
+        analysisStyleProfiles,
       );
       if (record) setDecisionRecords((current) => [...current.filter(({ id }) => id !== record.id), record]);
       setGame(applyMove(game, move));
@@ -608,7 +883,7 @@ export default function Home() {
       <header className="topbar">
         <div className="brand-lockup"><span className="brand-mark"><i /><i /><i /></span><div><p>MESA</p><strong>QUINCE</strong></div></div>
         <div className="match-title"><span className="eyebrow">Practice table · Round {game.round}</span><h1>First to 15</h1></div>
-        <div className="header-actions"><button className="quiet-button" type="button" onClick={() => window.alert('Double-nine · 3 players · 10 tiles each · 25 sleep · mandatory play · blocked low-pip hand wins · ties score no point · first to 15 wins.')}>Rules</button><button className="new-game-button" type="button" onClick={resetDay}>New game</button></div>
+        <div className="header-actions"><button className="quiet-button" type="button" onClick={() => window.alert('Double-nine · 3 players · 10 tiles each · 25 sleep · mandatory play · blocked low-pip hand wins · ties score no point · first to 15 wins.')}>Rules</button><button className="quiet-button training-button" type="button" onClick={() => setTrainingOpen(true)}>Training</button><button className="new-game-button" type="button" onClick={resetDay}>New game</button></div>
       </header>
 
       <section className="workspace">
@@ -676,6 +951,7 @@ export default function Home() {
             </div>}
             {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && reviewOpen && roundReview && <RoundReviewPanel
               review={roundReview}
+              onPractice={practiceDecision}
               onContinue={game.phase === 'matchEnd' ? resetDay : nextRound}
               continueLabel={game.phase === 'matchEnd' ? 'Play another day' : game.result.winner === null ? 'Replay with same opener' : `${names[game.result.winner]} opens next round`}
             />}
@@ -704,20 +980,20 @@ export default function Home() {
                 {belief.softReads.length === 0 && <p><strong>Other values:</strong> unknown</p>}
               </div>
             </div>)}
-            {currentBeliefState && <div className={`belief-quality ${currentBeliefState.diagnostics.confidence}`}>
-              <span><i /> {currentBeliefState.diagnostics.confidence === 'high' ? 'Stable' : currentBeliefState.diagnostics.confidence === 'moderate' ? 'Moderate' : 'Thin'} particle pool</span>
-              <b>{Math.round(currentBeliefState.diagnostics.effectiveSamples)} effective / {currentBeliefState.diagnostics.particleCount}</b>
+            {analysisBeliefState && <div className={`belief-quality ${analysisBeliefState.diagnostics.confidence}`}>
+              <span><i /> {analysisBeliefState.diagnostics.confidence === 'high' ? 'Stable' : analysisBeliefState.diagnostics.confidence === 'moderate' ? 'Moderate' : 'Thin'} particle pool</span>
+              <b>{Math.round(analysisBeliefState.diagnostics.effectiveSamples)} effective / {analysisBeliefState.diagnostics.particleCount}</b>
             </div>}
-            <small>The same plausible deals persist across turns. Passes eliminate impossible deals; tile choices change their weights.</small>
+            <small>The same plausible deals persist across turns. Passes eliminate impossible deals; tile choices change their weights. Historical calibration lowers confidence when claimed probabilities have missed too often.</small>
           </div>}
 
-          {game.phase === 'playing' && currentStyleProfiles.some((style) => style.observedChoices > 0) && <div className="read-card style-card">
+          {game.phase === 'playing' && analysisStyleProfiles.some((style) => style.observedChoices > 0) && <div className="read-card style-card">
             <span className="read-label">Playing-style tracker</span>
-            {currentStyleProfiles.map((style) => <div className="style-player" key={style.player}>
-              <div><b>{names[style.player]}</b><small>{style.observedChoices} useful choice{style.observedChoices === 1 ? '' : 's'} · {style.confidence} confidence</small></div>
+            {analysisStyleProfiles.map((style) => <div className="style-player" key={style.player}>
+              <div><b>{names[style.player]} · {opponentArchetype(style)}</b><small>{style.observedChoices} useful choice{style.observedChoices === 1 ? '' : 's'} · {style.confidence} confidence</small></div>
               <p>{describeOpponentStyle(style).join(' · ')}</p>
             </div>)}
-            <small>These are tendencies, not certainties. They influence hidden-hand weights and simulated replies only after enough choices are observed.</small>
+            <small>These are tendencies, not certainties. Historical calibration automatically shrinks their influence toward neutral when predictions have been inaccurate.</small>
           </div>}
 
           {coach.kind === 'intro' && <div className="coach-copy"><span className="eyebrow">Your exact house rules</span><h3>Three players. Ten tiles each. <b>Twenty-five sleep.</b></h3><p>The coach will judge decisions without peeking at the two hidden hands or the sleeping tiles.</p></div>}
@@ -741,6 +1017,8 @@ export default function Home() {
           <div className="coach-footer"><span>Coach method</span><b><i /> 900 beliefs + ISMCTS</b></div>
         </aside>
       </section>
+      {trainingOpen && <TrainingCenter progress={trainingProgress} onStartDrill={startTargetedDrill} onExport={exportTrainingData} onClose={() => setTrainingOpen(false)} />}
+      {practiceState && <PracticeOverlay practice={practiceState} onChoose={choosePracticeMove} onRetry={retryPractice} onClose={() => setPracticeState(null)} />}
     </main>
   );
 }

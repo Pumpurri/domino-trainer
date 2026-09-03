@@ -10,6 +10,7 @@ import {
   createBeliefState,
   createDecisionRecord,
   createOpponentStyles,
+  createPracticeGame,
   detectStrategicPhase,
   estimateBeliefs,
   fullSet,
@@ -19,6 +20,7 @@ import {
   mergeMoveAnalyses,
   samplePossibleHands,
   seededRandom,
+  simulatePracticeReplies,
   updateBeliefState,
   updateOpponentStyles,
   engineTesting,
@@ -382,6 +384,21 @@ test('decision records contain information-safe evidence and ignore real hidden 
   const serialized = JSON.stringify(firstRecord);
   assert.ok(!serialized.includes(`\"id\":\"${available[0].id}\"`));
   assert.equal(firstRecord.options[0].pairedWins.length, 24);
+  assert.deepEqual(firstRecord.publicState.chain, base.chain);
+  assert.deepEqual(firstRecord.publicState.voids, [[], [], []]);
+
+  const firstPractice = createPracticeGame(firstRecord, 0);
+  const secondPractice = createPracticeGame(firstRecord, 1);
+  assert.ok(firstPractice);
+  assert.ok(secondPractice);
+  assert.deepEqual(firstPractice.hands[0], ownHand);
+  assert.deepEqual(firstPractice.chain, base.chain);
+  assert.deepEqual(firstPractice.hands.map((hand) => hand.length), base.hands.map((hand) => hand.length));
+  assert.notEqual(
+    firstPractice.hands.slice(1).flat().map(({ id }) => id).sort().join(','),
+    secondPractice.hands.slice(1).flat().map(({ id }) => id).sort().join(','),
+  );
+  assert.ok(simulatePracticeReplies(firstRecord, firstRecord.bestKey, 0));
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {
@@ -420,12 +437,38 @@ test('post-round review separates confident mistakes from revealed hindsight', (
     inferredEvidence: ['Rosa looked less likely to hold 9.'],
     beliefs: [{ player: 1, certainOut: [], softReads: [{ value: 9, direction: 'less', probability: 0.25, strength: 'moderate' }] }],
     beliefConfidence: 'high',
+    publicState: {
+      chain: [placed('1-9', 1, 9)],
+      starter: 0,
+      voids: [[], [], []],
+      consecutivePasses: 0,
+      events: [],
+    },
+    probabilityForecasts: [{ player: 1, value: 9, probability: 0.25 }],
+    styleProfiles: [{
+      player: 1,
+      observedChoices: 6,
+      doubleOpportunities: 2,
+      blockOpportunities: 3,
+      highPipTendency: 0.7,
+      doubleTendency: 0.6,
+      controlTendency: 0.65,
+      blockTendency: 0.55,
+      strategicConsistency: 0.7,
+      unpredictability: 0.3,
+      confidence: 'moderate',
+      lastRound: 1,
+      lastEventCount: 0,
+    }],
     recommendationReason: 'The stronger move preserved control.',
   };
   const finalGame = playingGame({
     phase: 'roundEnd',
     hands: [[tile(0, 0)], [tile(3, 9)], [tile(4, 4)]],
-    events: [],
+    events: [
+      { kind: 'play', player: 0, tile: tile(1, 2), side: 'left', endsBefore: [1, 9], nextVoids: [] },
+      { kind: 'play', player: 1, tile: tile(3, 5), side: 'left', endsBefore: [3, 9], nextVoids: [] },
+    ],
     result: { winner: 2, reason: 'empty', pips: [0, 12, 8], matchWinner: null },
   });
   const review = buildRoundReview(finalGame, [record]);
@@ -434,6 +477,16 @@ test('post-round review separates confident mistakes from revealed hindsight', (
   assert.equal(review.biggestMistake.interval[0], 100);
   assert.match(review.biggestMistake.revealed, /did hold 9/);
   assert.deepEqual(review.beliefChecks, { correct: 0, total: 1 });
+  assert.equal(review.calibration.belief.length, 1);
+  assert.deepEqual(review.calibration.belief[0], {
+    player: 1,
+    label: 'holds-9',
+    forecast: 0.25,
+    observed: 1,
+    confidence: 'high',
+  });
+  assert.ok(review.calibration.style.length >= 3);
+  assert.ok(review.calibration.style.every(({ player }) => player === 1));
 });
 
 test('multicore analysis shards merge to the same paired release evaluation', () => {
