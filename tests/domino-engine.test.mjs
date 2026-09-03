@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   analyzeMoves,
+  applyMove,
   applyPass,
   chooseCasualMove,
+  createBeliefState,
   detectStrategicPhase,
   estimateBeliefs,
   fullSet,
@@ -11,6 +13,7 @@ import {
   legalMovesFor,
   samplePossibleHands,
   seededRandom,
+  updateBeliefState,
   engineTesting,
 } from '../app/domino-engine.ts';
 
@@ -91,6 +94,67 @@ test('the analyzer does not change when the real hidden tile identities change',
   const alternate = { ...base, hands: [base.hands[0], deck.slice(12, 16), deck.slice(20, 24)] };
   const summarize = (game) => analyzeMoves(game, 70).map((move) => [move.tile.id, move.side, move.winRate, move.evidence.nextPassRate]);
   assert.deepEqual(summarize(base), summarize(alternate));
+});
+
+test('persistent beliefs ignore the real hidden tile identities and survive unchanged state', () => {
+  const ownHand = [tile(1, 5), tile(8, 9), tile(2, 2)];
+  const deck = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));
+  const base = playingGame({
+    hands: [ownHand, deck.slice(0, 5), deck.slice(5, 10)],
+    chain: [placed('1-9', 1, 9)],
+  });
+  const alternate = { ...base, hands: [ownHand, deck.slice(15, 20), deck.slice(25, 30)] };
+  const first = createBeliefState(base, 0, 140);
+  const second = createBeliefState(alternate, 0, 140);
+
+  assert.deepEqual(first.particles, second.particles);
+  assert.strictEqual(updateBeliefState(first, base, 0, 140), first);
+  assert.ok(analyzeMoves(base, 999, first).every(({ samples }) => samples === first.particles.length));
+});
+
+test('a pass eliminates impossible particles and replenishes a thin pool', () => {
+  const deck = fullSet();
+  const ownHand = deck.filter(({ a }) => a >= 2).slice(0, 10);
+  const excluded = new Set([...ownHand.map(({ id }) => id), '0-1']);
+  const available = deck.filter(({ id }) => !excluded.has(id));
+  const passerHand = available.filter(({ a, b }) => a > 1 && b > 1).slice(0, 5);
+  const used = new Set(passerHand.map(({ id }) => id));
+  const otherHand = available.filter(({ id }) => !used.has(id)).slice(0, 5);
+  const game = playingGame({
+    hands: [ownHand, passerHand, otherHand],
+    chain: [placed('0-1', 0, 1)],
+    current: 1,
+  });
+  const beliefs = createBeliefState(game, 0, 240);
+  const updated = updateBeliefState(beliefs, applyPass(game), 0, 240);
+
+  assert.equal(updated.eventCount, 1);
+  assert.equal(updated.hardEvidenceUpdates, 1);
+  assert.ok(updated.particles.every((particle) => particle.hands[1].every(({ a, b }) => a > 1 && b > 1)));
+  assert.ok(updated.diagnostics.eliminatedLastUpdate > 0);
+  assert.equal(updated.diagnostics.resampledLastUpdate, true);
+  assert.equal(updated.diagnostics.particleCount, 240);
+  assert.notEqual(updated.diagnostics.confidence, 'low');
+});
+
+test('an observed tile reweights ownership-consistent particles and removes the public tile', () => {
+  const ownHand = [tile(0, 0), tile(2, 2), tile(3, 3), tile(4, 4), tile(5, 5)];
+  const playerHand = [tile(1, 4), tile(2, 6), tile(6, 8), tile(7, 7), tile(0, 3)];
+  const excluded = new Set([...ownHand, ...playerHand, tile(1, 9)].map(({ id }) => id));
+  const otherHand = fullSet().filter(({ id }) => !excluded.has(id)).slice(0, 5);
+  const game = playingGame({
+    hands: [ownHand, playerHand, otherHand],
+    chain: [placed('1-9', 1, 9)],
+    current: 1,
+  });
+  const beliefs = createBeliefState(game, 0, 240);
+  const observedMove = legalMovesFor(playerHand, game.chain).find(({ tile: candidate }) => candidate.id === '1-4');
+  const updated = updateBeliefState(beliefs, applyMove(game, observedMove), 0, 240);
+
+  assert.equal(updated.choiceUpdates, 1);
+  assert.equal(updated.diagnostics.reweightedLastUpdate, 1);
+  assert.ok(updated.diagnostics.eliminatedLastUpdate > 0);
+  assert.ok(updated.particles.every((particle) => particle.hands.every((hand) => hand.every(({ id }) => id !== '1-4'))));
 });
 
 test('choosing one end is probabilistic evidence; only a pass is certain', () => {

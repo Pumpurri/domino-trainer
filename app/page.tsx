@@ -6,6 +6,8 @@ import {
   chooseBotMove as chooseSmartBotMove,
   estimateBeliefs as estimateSmartBeliefs,
   reasonForMove as explainSmartMove,
+  updateBeliefState as updateSmartBeliefState,
+  type BeliefState,
   type Difficulty,
 } from './domino-engine';
 
@@ -61,6 +63,7 @@ type WeightedSample = { hands: Tile[][]; weight: number };
 type SnakeRow = { tiles: PlacedTile[]; turn: PlacedTile | null };
 
 const names = ['You', 'Rosa', 'Tino'];
+const beliefParticleCount = 900;
 const dotMap: Record<number, number[]> = {
   0: [], 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8],
   5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8],
@@ -449,12 +452,23 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coach, setCoach] = useState<Coach>({ kind: 'intro' });
   const [difficulty, setDifficulty] = useState<Difficulty>('strong');
+  const [beliefState, setBeliefState] = useState<BeliefState | null>(null);
   const legalMoves = useMemo(() => game.phase === 'playing' && game.current === 0 ? legalMovesFor(game.hands[0], game.chain) : [], [game]);
   const selectedMoves = legalMoves.filter((move) => move.tile.id === selectedId);
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
   const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
-  const beliefs = useMemo(() => game.phase === 'playing' ? estimateSmartBeliefs(game) : [], [game]);
+  const currentBeliefState = useMemo(() => {
+    if (game.phase === 'pickStarter' || game.phase === 'starterDrawn' || !game.hands[0].length) return null;
+    return updateSmartBeliefState(beliefState, game, 0, beliefParticleCount);
+  }, [beliefState, game]);
+  const beliefs = useMemo(() => game.phase === 'playing'
+    ? estimateSmartBeliefs(game, 0, beliefParticleCount, currentBeliefState ?? undefined)
+    : [], [currentBeliefState, game]);
+
+  useEffect(() => {
+    if (beliefState !== currentBeliefState) setBeliefState(currentBeliefState);
+  }, [beliefState, currentBeliefState]);
 
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
@@ -494,7 +508,7 @@ export default function Home() {
   }
 
   function playUserMove(move: Move) {
-    const ranked = analyzeSmartMoves(game);
+    const ranked = analyzeSmartMoves(game, beliefParticleCount, currentBeliefState ?? undefined);
     const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
     const best = ranked[0];
     const gap = best.winRate - chosen.winRate;
@@ -523,7 +537,7 @@ export default function Home() {
   }
 
   function showHint() {
-    const ranked = analyzeSmartMoves(game);
+    const ranked = analyzeSmartMoves(game, beliefParticleCount, currentBeliefState ?? undefined);
     if (!ranked.length) return;
     const best = ranked[0];
     const second = ranked[1];
@@ -646,7 +660,11 @@ export default function Home() {
                 {belief.softReads.length === 0 && <p><strong>Other values:</strong> unknown</p>}
               </div>
             </div>)}
-            <small>Passes create certain facts. Tile choices only shift probabilities; they never prove a player is out.</small>
+            {currentBeliefState && <div className={`belief-quality ${currentBeliefState.diagnostics.confidence}`}>
+              <span><i /> {currentBeliefState.diagnostics.confidence === 'high' ? 'Stable' : currentBeliefState.diagnostics.confidence === 'moderate' ? 'Moderate' : 'Thin'} particle pool</span>
+              <b>{Math.round(currentBeliefState.diagnostics.effectiveSamples)} effective / {currentBeliefState.diagnostics.particleCount}</b>
+            </div>}
+            <small>The same plausible deals persist across turns. Passes eliminate impossible deals; tile choices change their weights.</small>
           </div>}
 
           {coach.kind === 'intro' && <div className="coach-copy"><span className="eyebrow">Your exact house rules</span><h3>Three players. Ten tiles each. <b>Twenty-five sleep.</b></h3><p>The coach will judge decisions without peeking at the two hidden hands or the sleeping tiles.</p></div>}
@@ -666,7 +684,7 @@ export default function Home() {
             <span>Opponent level</span>
             <div><button className={difficulty === 'casual' ? 'active' : ''} type="button" onClick={() => setDifficulty('casual')}>Casual</button><button className={difficulty === 'strong' ? 'active' : ''} type="button" onClick={() => setDifficulty('strong')}>Strong</button></div>
           </div>
-          <div className="coach-footer"><span>Coach method</span><b><i /> 900 weighted deals + endgame solver</b></div>
+          <div className="coach-footer"><span>Coach method</span><b><i /> 900 persistent deals + endgame solver</b></div>
         </aside>
       </section>
     </main>

@@ -63,8 +63,31 @@ export type RatedMove = Move & {
 };
 export type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
 export type PlayerBelief = { player: number; certainOut: number[]; softReads: SoftRead[] };
+export type BeliefConfidence = 'low' | 'moderate' | 'high';
+export type BeliefParticle = { hands: Tile[][]; weight: number };
+export type BeliefDiagnostics = {
+  particleCount: number;
+  effectiveSamples: number;
+  uniqueDeals: number;
+  confidence: BeliefConfidence;
+  eliminatedLastUpdate: number;
+  reweightedLastUpdate: number;
+  resampledLastUpdate: boolean;
+};
+export type BeliefState = {
+  perspective: number;
+  round: number;
+  eventCount: number;
+  targetCount: number;
+  ownHandSignature: string;
+  particles: BeliefParticle[];
+  hardEvidenceUpdates: number;
+  choiceUpdates: number;
+  resampleCount: number;
+  diagnostics: BeliefDiagnostics;
+};
 
-type WeightedSample = { hands: Tile[][]; weight: number };
+type WeightedSample = BeliefParticle;
 type RolloutOutcome = {
   winner: number | null;
   reason: 'empty' | 'blocked' | 'cutoff';
@@ -519,63 +542,72 @@ function chainFromEnds(ends: [number | null, number | null]): PlacedTile[] {
   return [{ id: `belief-${left}-${right}`, a: left, b: right, left, right, player: -1 }];
 }
 
+function voidsBeforeEvent(game: Game, eventIndex: number): Set<number>[] {
+  const voids = [new Set<number>(), new Set<number>(), new Set<number>()];
+  game.events.slice(0, eventIndex).forEach((event) => {
+    if (event.kind !== 'pass') return;
+    const [left, right] = event.endsBefore;
+    if (left !== null) voids[event.player].add(left);
+    if (right !== null) voids[event.player].add(right);
+  });
+  return voids;
+}
+
+function handsBeforeEvent(game: Game, sampledHands: Tile[][], eventIndex: number): Tile[][] {
+  const reconstructed = sampledHands.map((hand) => new Map(hand.map((tile) => [tile.id, tile])));
+  for (let futureIndex = eventIndex; futureIndex < game.events.length; futureIndex += 1) {
+    const future = game.events[futureIndex];
+    if (future.kind === 'play') reconstructed[future.player].set(future.tile.id, future.tile);
+  }
+  return reconstructed.map((hand) => [...hand.values()]);
+}
+
+function observedChoiceProbability(game: Game, eventIndex: number, hands: Tile[][]): number {
+  const event = game.events[eventIndex];
+  if (event.kind !== 'play') return 1;
+  const [left, right] = event.endsBefore;
+  const hand = hands[event.player];
+  const legal = legalMovesFor(hand, chainFromEnds(event.endsBefore));
+  const observed = legal.find((move) => move.tile.id === event.tile.id && move.side === event.side)
+    ?? legal.find((move) => move.tile.id === event.tile.id);
+  if (!observed) return 0;
+  if (left === null || right === null || legal.length <= 1) return 1;
+
+  const eventsBefore = game.events.slice(0, eventIndex);
+  const eventVoids = voidsBeforeEvent(game, eventIndex);
+  let consecutivePasses = 0;
+  for (let pastIndex = eventsBefore.length - 1; pastIndex >= 0; pastIndex -= 1) {
+    if (eventsBefore[pastIndex].kind !== 'pass') break;
+    consecutivePasses += 1;
+  }
+  const playedTiles = eventsBefore.flatMap((past) => past.kind === 'play' ? [past.tile] : []);
+  const handSizes = hands.map((candidate) => candidate.length);
+  const context = strategyContextForState({
+    hand,
+    handSizes,
+    chainLength: playedTiles.length,
+    consecutivePasses,
+    left,
+    right,
+    voids: eventVoids,
+    player: event.player,
+    playedTiles,
+  });
+  const scores = legal.map((move) => moveHeuristic(move, hand, eventVoids, event.player, handSizes, context));
+  const maximum = Math.max(...scores);
+  const weights = scores.map((score) => Math.exp((score - maximum) / 2.25));
+  const observedIndex = legal.indexOf(observed);
+  const strategicProbability = weights[observedIndex] / weights.reduce((sum, weight) => sum + weight, 0);
+  return 0.4 / legal.length + 0.6 * strategicProbability;
+}
+
 function choiceLikelihood(game: Game, sampledHands: Tile[][], perspective: number): number {
   let logLikelihood = 0;
-
   game.events.forEach((event, eventIndex) => {
     if (event.kind !== 'play' || event.player === perspective || event.endsBefore[0] === null) return;
-    const reconstructed = new Map(sampledHands[event.player].map((tile) => [tile.id, tile]));
-    for (let futureIndex = eventIndex; futureIndex < game.events.length; futureIndex += 1) {
-      const future = game.events[futureIndex];
-      if (future.kind === 'play' && future.player === event.player) reconstructed.set(future.tile.id, future.tile);
-    }
-
-    const hand = [...reconstructed.values()];
-    const legal = legalMovesFor(hand, chainFromEnds(event.endsBefore));
-    if (legal.length <= 1) return;
-    const observed = legal.find((move) => move.tile.id === event.tile.id && move.side === event.side)
-      ?? legal.find((move) => move.tile.id === event.tile.id);
-    if (!observed) return;
-
-    const eventsBefore = game.events.slice(0, eventIndex);
-    const eventVoids = [new Set<number>(), new Set<number>(), new Set<number>()];
-    eventsBefore.forEach((past) => {
-      if (past.kind !== 'pass') return;
-      const [left, right] = past.endsBefore;
-      if (left !== null) eventVoids[past.player].add(left);
-      if (right !== null) eventVoids[past.player].add(right);
-    });
-    eventVoids[(event.player + 1) % 3] = new Set([...eventVoids[(event.player + 1) % 3], ...event.nextVoids]);
-    const handSizes = game.hands.map((currentHand, player) => currentHand.length + game.events
-      .slice(eventIndex)
-      .filter((future) => future.kind === 'play' && future.player === player).length);
-    handSizes[event.player] = hand.length;
-    let consecutivePasses = 0;
-    for (let pastIndex = eventsBefore.length - 1; pastIndex >= 0; pastIndex -= 1) {
-      if (eventsBefore[pastIndex].kind !== 'pass') break;
-      consecutivePasses += 1;
-    }
-    const playedTiles = eventsBefore.flatMap((past) => past.kind === 'play' ? [past.tile] : []);
-    const context = strategyContextForState({
-      hand,
-      handSizes,
-      chainLength: playedTiles.length,
-      consecutivePasses,
-      left: event.endsBefore[0],
-      right: event.endsBefore[1],
-      voids: eventVoids,
-      player: event.player,
-      playedTiles,
-    });
-    const scores = legal.map((move) => moveHeuristic(move, hand, eventVoids, event.player, handSizes, context));
-    const maximum = Math.max(...scores);
-    const weights = scores.map((score) => Math.exp((score - maximum) / 2.25));
-    const observedIndex = legal.indexOf(observed);
-    const strategicProbability = weights[observedIndex] / weights.reduce((sum, weight) => sum + weight, 0);
-    const humanProbability = 0.4 / legal.length + 0.6 * strategicProbability;
-    logLikelihood += Math.log(Math.max(humanProbability, 0.008));
+    const probability = observedChoiceProbability(game, eventIndex, handsBeforeEvent(game, sampledHands, eventIndex));
+    logLikelihood += Math.log(Math.max(probability, 0.008));
   });
-
   return Math.exp(Math.max(-10, logLikelihood * 0.38));
 }
 
@@ -591,8 +623,226 @@ function buildParticles(game: Game, perspective: number, count: number, seed: st
   return samples;
 }
 
-export function estimateBeliefs(game: Game, perspective = 0, sampleCount = 480): PlayerBelief[] {
-  const samples = buildParticles(game, perspective, sampleCount, `beliefs|${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`);
+function handSignature(hand: Tile[]): string {
+  return hand.map((tile) => tile.id).sort().join(',');
+}
+
+function normalizeParticleWeights(particles: BeliefParticle[]): BeliefParticle[] {
+  if (!particles.length) return [];
+  const totalWeight = particles.reduce((sum, particle) => sum + particle.weight, 0);
+  if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
+    return particles.map((particle) => ({ ...particle, weight: 1 }));
+  }
+  const scale = particles.length / totalWeight;
+  return particles.map((particle) => ({ ...particle, weight: particle.weight * scale }));
+}
+
+function particleEffectiveSamples(particles: BeliefParticle[]): number {
+  const totalWeight = particles.reduce((sum, particle) => sum + particle.weight, 0);
+  const squaredWeight = particles.reduce((sum, particle) => sum + particle.weight * particle.weight, 0);
+  return squaredWeight ? totalWeight * totalWeight / squaredWeight : 0;
+}
+
+function particleDealSignature(particle: BeliefParticle, perspective: number): string {
+  return particle.hands
+    .map((hand, player) => player === perspective ? '' : handSignature(hand))
+    .join('/');
+}
+
+function beliefDiagnostics(
+  particles: BeliefParticle[],
+  perspective: number,
+  targetCount: number,
+  eliminatedLastUpdate: number,
+  reweightedLastUpdate: number,
+  resampledLastUpdate: boolean,
+): BeliefDiagnostics {
+  const effectiveSamples = particleEffectiveSamples(particles);
+  const uniqueDeals = new Set(particles.map((particle) => particleDealSignature(particle, perspective))).size;
+  const coverage = particles.length / Math.max(1, targetCount);
+  const efficiency = effectiveSamples / Math.max(1, particles.length);
+  const diversity = uniqueDeals / Math.max(1, particles.length);
+  const confidence: BeliefConfidence = coverage >= 0.8 && efficiency >= 0.55 && diversity >= 0.35
+    ? 'high'
+    : coverage >= 0.45 && efficiency >= 0.3 && diversity >= 0.18
+      ? 'moderate'
+      : 'low';
+  return {
+    particleCount: particles.length,
+    effectiveSamples,
+    uniqueDeals,
+    confidence,
+    eliminatedLastUpdate,
+    reweightedLastUpdate,
+    resampledLastUpdate,
+  };
+}
+
+function systematicResample(particles: BeliefParticle[], count: number, random: () => number): BeliefParticle[] {
+  if (!particles.length || count <= 0) return [];
+  const normalized = normalizeParticleWeights(particles);
+  const cumulative: number[] = [];
+  let total = 0;
+  normalized.forEach((particle) => {
+    total += particle.weight;
+    cumulative.push(total);
+  });
+  const step = total / count;
+  let target = random() * step;
+  let particleIndex = 0;
+  const sampled: BeliefParticle[] = [];
+  for (let index = 0; index < count; index += 1) {
+    while (particleIndex < cumulative.length - 1 && target > cumulative[particleIndex]) particleIndex += 1;
+    sampled.push({ hands: normalized[particleIndex].hands.map((hand) => [...hand]), weight: 1 });
+    target += step;
+  }
+  return sampled;
+}
+
+function beliefSeed(game: Game, perspective: number, label: string): string {
+  return `${label}|${perspective}|${game.round}|${game.events.length}|${handSignature(game.hands[perspective])}|${game.chain.map((tile) => tile.id).join(',')}`;
+}
+
+export function createBeliefState(game: Game, perspective = 0, targetCount = 900): BeliefState {
+  const particles = normalizeParticleWeights(buildParticles(game, perspective, targetCount, beliefSeed(game, perspective, 'persistent-beliefs')));
+  const hardEvidenceUpdates = game.events.filter((event) => event.player !== perspective).length;
+  const choiceUpdates = game.events.filter((event) => event.kind === 'play' && event.player !== perspective && event.endsBefore[0] !== null).length;
+  return {
+    perspective,
+    round: game.round,
+    eventCount: game.events.length,
+    targetCount,
+    ownHandSignature: handSignature(game.hands[perspective]),
+    particles,
+    hardEvidenceUpdates,
+    choiceUpdates,
+    resampleCount: 0,
+    diagnostics: beliefDiagnostics(particles, perspective, targetCount, 0, 0, false),
+  };
+}
+
+export function updateBeliefState(
+  previous: BeliefState | null,
+  game: Game,
+  perspective = 0,
+  targetCount = 900,
+): BeliefState {
+  const currentOwnHand = handSignature(game.hands[perspective]);
+  if (!previous
+    || previous.perspective !== perspective
+    || previous.round !== game.round
+    || previous.targetCount !== targetCount
+    || previous.eventCount > game.events.length
+    || (previous.eventCount === game.events.length && previous.ownHandSignature !== currentOwnHand)) {
+    return createBeliefState(game, perspective, targetCount);
+  }
+  if (previous.eventCount === game.events.length) return previous;
+
+  let particles = previous.particles;
+  let eliminatedLastUpdate = 0;
+  let reweightedLastUpdate = 0;
+  let hardEvidenceUpdates = previous.hardEvidenceUpdates;
+  let choiceUpdates = previous.choiceUpdates;
+
+  for (let eventIndex = previous.eventCount; eventIndex < game.events.length; eventIndex += 1) {
+    const event = game.events[eventIndex];
+    const nextParticles: BeliefParticle[] = [];
+    if (event.player !== perspective) hardEvidenceUpdates += 1;
+    if (event.kind === 'play' && event.player !== perspective && event.endsBefore[0] !== null) {
+      choiceUpdates += 1;
+      reweightedLastUpdate += 1;
+    }
+
+    for (const particle of particles) {
+      const hand = particle.hands[event.player];
+      if (event.kind === 'pass') {
+        const ends = openValues(event.endsBefore[0], event.endsBefore[1]);
+        if (hand.some((tile) => ends.some((value) => matchesValue(tile, value)))) {
+          eliminatedLastUpdate += 1;
+          continue;
+        }
+        nextParticles.push(particle);
+        continue;
+      }
+
+      if (!hand.some((tile) => tile.id === event.tile.id)) {
+        eliminatedLastUpdate += 1;
+        continue;
+      }
+      const choiceProbability = event.player === perspective
+        ? 1
+        : observedChoiceProbability(game, eventIndex, particle.hands);
+      if (choiceProbability <= 0) {
+        eliminatedLastUpdate += 1;
+        continue;
+      }
+      const hands = particle.hands.map((candidate, player) => player === event.player
+        ? candidate.filter((tile) => tile.id !== event.tile.id)
+        : candidate);
+      nextParticles.push({ hands, weight: particle.weight * choiceProbability ** 0.38 });
+    }
+    particles = normalizeParticleWeights(nextParticles);
+    if (!particles.length) break;
+  }
+
+  if (!particles.length) {
+    const rebuilt = createBeliefState(game, perspective, targetCount);
+    return {
+      ...rebuilt,
+      resampleCount: previous.resampleCount + 1,
+      diagnostics: beliefDiagnostics(rebuilt.particles, perspective, targetCount, eliminatedLastUpdate, reweightedLastUpdate, true),
+    };
+  }
+
+  particles = particles.map((particle) => ({
+    ...particle,
+    hands: particle.hands.map((hand, player) => player === perspective ? [...game.hands[perspective]] : hand),
+  }));
+  const effectiveSamples = particleEffectiveSamples(particles);
+  const needsResampling = particles.length < targetCount * 0.55 || effectiveSamples < targetCount * 0.4;
+  let resampleCount = previous.resampleCount;
+  if (needsResampling) {
+    const random = seededRandom(beliefSeed(game, perspective, `belief-resample-${previous.resampleCount + 1}`));
+    const freshGoal = Math.max(1, Math.round(targetCount * 0.35));
+    const fresh = normalizeParticleWeights(buildParticles(game, perspective, freshGoal, beliefSeed(game, perspective, `belief-fresh-${previous.resampleCount + 1}`)));
+    const retained = systematicResample(particles, Math.max(0, targetCount - fresh.length), random);
+    particles = normalizeParticleWeights([...retained, ...fresh]);
+    resampleCount += 1;
+  }
+
+  return {
+    perspective,
+    round: game.round,
+    eventCount: game.events.length,
+    targetCount,
+    ownHandSignature: currentOwnHand,
+    particles,
+    hardEvidenceUpdates,
+    choiceUpdates,
+    resampleCount,
+    diagnostics: beliefDiagnostics(
+      particles,
+      perspective,
+      targetCount,
+      eliminatedLastUpdate,
+      reweightedLastUpdate,
+      needsResampling,
+    ),
+  };
+}
+
+function currentBeliefParticles(game: Game, perspective: number, beliefState?: BeliefState): BeliefParticle[] | null {
+  if (!beliefState
+    || beliefState.perspective !== perspective
+    || beliefState.round !== game.round
+    || beliefState.eventCount !== game.events.length
+    || beliefState.ownHandSignature !== handSignature(game.hands[perspective])) return null;
+  return beliefState.particles;
+}
+
+export function estimateBeliefs(game: Game, perspective = 0, sampleCount = 480, beliefState?: BeliefState): PlayerBelief[] {
+  const samples = currentBeliefParticles(game, perspective, beliefState)
+    ?? buildParticles(game, perspective, sampleCount, `beliefs|${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`);
   return [0, 1, 2].filter((player) => player !== perspective).map((player) => {
     const certainOut = [...game.voids[player]].sort((a, b) => a - b);
     const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
@@ -747,11 +997,12 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
   return { winner: null, reason: 'cutoff', nextPlayerPassed, pips: hands.map(pipTotal) };
 }
 
-function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: number): RatedMove[] {
+function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: number, beliefState?: BeliefState): RatedMove[] {
   const moves = legalMovesFor(game.hands[perspective], game.chain);
   if (!moves.length) return [];
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
-  const samples = buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
+  const samples = currentBeliefParticles(game, perspective, beliefState)
+    ?? buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
   const handSizes = game.hands.map((hand) => hand.length);
   const context = strategyContextForGame(game, perspective);
 
@@ -803,8 +1054,8 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
   }).sort((a, b) => b.winRate - a.winRate || b.heuristic - a.heuristic);
 }
 
-export function analyzeMoves(game: Game, sampleCount = 900): RatedMove[] {
-  return analyzeMovesForPlayer(game, 0, sampleCount);
+export function analyzeMoves(game: Game, sampleCount = 900, beliefState?: BeliefState): RatedMove[] {
+  return analyzeMovesForPlayer(game, 0, sampleCount, beliefState);
 }
 
 export function chooseStrongMove(game: Game, moves: Move[], sampleCount = 500): Move {
