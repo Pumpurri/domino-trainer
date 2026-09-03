@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import {
+  analyzeMoves as analyzeSmartMoves,
+  chooseBotMove as chooseSmartBotMove,
+  estimateBeliefs as estimateSmartBeliefs,
+  reasonForMove as explainSmartMove,
+  type Difficulty,
+} from './domino-engine';
 
 type Tile = { id: string; a: number; b: number };
 type Side = 'left' | 'right';
@@ -441,12 +448,13 @@ export default function Home() {
   const [game, setGame] = useState<Game>(initialGame);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coach, setCoach] = useState<Coach>({ kind: 'intro' });
+  const [difficulty, setDifficulty] = useState<Difficulty>('strong');
   const legalMoves = useMemo(() => game.phase === 'playing' && game.current === 0 ? legalMovesFor(game.hands[0], game.chain) : [], [game]);
   const selectedMoves = legalMoves.filter((move) => move.tile.id === selectedId);
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
   const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
-  const beliefs = useMemo(() => game.phase === 'playing' ? estimateBeliefs(game) : [], [game]);
+  const beliefs = useMemo(() => game.phase === 'playing' ? estimateSmartBeliefs(game) : [], [game]);
 
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
@@ -461,7 +469,7 @@ export default function Home() {
           : { kind: 'watching', message: `${names[player]} passed.` });
       } else {
         const player = game.current;
-        const move = chooseBotMove(game, moves);
+        const move = chooseSmartBotMove(game, moves, difficulty);
         const next = applyMove(game, move);
         setGame(next);
         setCoach(next.phase === 'playing' && next.current === 0
@@ -470,7 +478,7 @@ export default function Home() {
       }
     }, 1750);
     return () => window.clearTimeout(timer);
-  }, [game, coach.kind]);
+  }, [game, coach.kind, difficulty]);
 
   function chooseStarterRule(choice: 'high' | 'low') {
     const starterDraw = drawForStarter(choice);
@@ -486,7 +494,7 @@ export default function Home() {
   }
 
   function playUserMove(move: Move) {
-    const ranked = analyzeMoves(game);
+    const ranked = analyzeSmartMoves(game);
     const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
     const best = ranked[0];
     const gap = best.winRate - chosen.winRate;
@@ -498,11 +506,11 @@ export default function Home() {
     const rating = tooClose ? 'Too close to call' : sameAsBest ? 'Best in simulations' : gap <= 13 ? 'Slight miss' : gap <= 24 ? 'Mistake' : 'Big mistake';
     const title = tooClose ? `${move.tile.a}–${move.tile.b} is in the top group` : sameAsBest ? `Strong simulation result — ${move.tile.a}–${move.tile.b}` : `${best.tile.a}–${best.tile.b} simulated better`;
     const body = tooClose
-      ? `The model cannot reliably separate this move from ${comparison!.tile.a}–${comparison!.tile.b}; the estimated difference is inside the uncertainty range. ${reasonForMove(game, move)}`
+      ? `The model cannot reliably separate this move from ${comparison!.tile.a}–${comparison!.tile.b}; the estimated difference is inside the uncertainty range. ${explainSmartMove(game, chosen, comparison)}`
       : sameAsBest
-        ? reasonForMove(game, move)
-        : `${reasonForMove(game, best)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
-    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} choice-weighted deals`;
+        ? explainSmartMove(game, chosen, comparison)
+        : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
+    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} plausible deals`;
     setGame(applyMove(game, move));
     setSelectedId(null);
     setCoach({ kind: 'feedback', rating, title, body, stat, tone });
@@ -515,7 +523,7 @@ export default function Home() {
   }
 
   function showHint() {
-    const ranked = analyzeMoves(game);
+    const ranked = analyzeSmartMoves(game);
     if (!ranked.length) return;
     const best = ranked[0];
     const second = ranked[1];
@@ -527,8 +535,8 @@ export default function Home() {
       title: tooClose
         ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
         : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
-      body: `${reasonForMove(game, best)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
-      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} choice-weighted deals`,
+      body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
+      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} plausible deals`,
     });
   }
 
@@ -654,7 +662,11 @@ export default function Home() {
           </div>}
           {coach.kind === 'feedback' && game.phase === 'playing' && <button className="play-button continue-button" type="button" onClick={continueAfterFeedback}>Continue <span>→</span></button>}
 
-          <div className="coach-footer"><span>Coach method</span><b><i /> 600 weighted simulations</b></div>
+          <div className="opponent-level" aria-label="Opponent difficulty">
+            <span>Opponent level</span>
+            <div><button className={difficulty === 'casual' ? 'active' : ''} type="button" onClick={() => setDifficulty('casual')}>Casual</button><button className={difficulty === 'strong' ? 'active' : ''} type="button" onClick={() => setDifficulty('strong')}>Strong</button></div>
+          </div>
+          <div className="coach-footer"><span>Coach method</span><b><i /> 900 weighted deals + endgame solver</b></div>
         </aside>
       </section>
     </main>

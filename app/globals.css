@@ -156,6 +156,12 @@ button { font:inherit; }
 .feedback-card h3 { margin:8px 0 9px; font:700 19px/1.2 Georgia,serif; }.feedback-card p { margin:0; color:var(--muted); font-size:11px; line-height:1.65; }.feedback-card small { display:block; margin-top:14px; padding-top:12px; border-top:1px solid #e4ded2; color:var(--felt); font-size:9px; font-weight:750; text-transform:uppercase; letter-spacing:.05em; }
 .continue-button { margin-top:0; }
 .coach-footer b { display:flex; align-items:center; gap:6px; color:var(--ink); font-size:9px; }.coach-footer b i { width:7px; height:7px; border-radius:50%; background:#4a9a79; box-shadow:0 0 0 3px #4a9a7921; }
+.opponent-level { margin-top:auto; padding:16px 0 13px; display:flex; align-items:center; justify-content:space-between; gap:9px; border-top:1px solid var(--line); color:var(--muted); font-size:9px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+.opponent-level>div { display:flex; padding:2px; border:1px solid #d4ccbd; border-radius:8px; background:#eee8dd; }
+.opponent-level button { min-width:52px; height:26px; padding:0 7px; border:0; border-radius:6px; color:#66726e; background:transparent; cursor:pointer; font-size:9px; font-weight:750; }
+.opponent-level button.active { color:white; background:var(--felt); box-shadow:0 2px 7px #123d3429; }
+.opponent-level+.coach-footer { margin-top:0; padding-top:12px; }
+.coach-footer b { max-width:145px; justify-content:flex-end; text-align:right; line-height:1.35; }
 
 @media (max-height:760px) {
   .setup-card,.round-overlay { padding:22px 28px; }

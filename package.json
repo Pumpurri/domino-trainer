@@ -9,6 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "benchmark": "node --experimental-strip-types scripts/benchmark-engine.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
