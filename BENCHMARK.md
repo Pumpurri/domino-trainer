@@ -96,3 +96,14 @@ The current information-set search was evaluated on 120 matched deals, producing
 | Strong | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] |
 
 Strong selected the expected move in all six designed strategic positions. These figures are a regression reference for this implementation, not a claim of optimal domino play.
+
+## High-budget 500-sample check
+
+The same 120 matched deals and 2,160 balanced rounds were rerun with 500 search samples per Strong decision. Increasing the ISMCTS budget did not improve the policy.
+
+| ISMCTS budget | Round win rate | Average end pips | Blocked win rate | Strategic positions |
+| --- | ---: | ---: | ---: | ---: |
+| 80 samples | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] | 6/6 |
+| 500 samples | 41.2% [39.1, 43.2] | 16.85 [16.02, 17.71] | 41.9% [39.7, 44.2] | 6/6 |
+
+The previous three-turn search scored 45.1% [43.3, 47.0] with 15.71 average end pips and a 45.9% blocked win rate at the same 500-sample budget. The current ISMCTS is therefore 3.9 percentage points worse in round win rate at equal budget. More iterations alone are not the next optimization target. The tree policy, utility signal, and information-set aggregation need investigation.
