@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type Tile = { id: string; a: number; b: number };
 type Side = 'left' | 'right';
@@ -51,6 +51,7 @@ type RatedMove = Move & { samples: number; effectiveSamples: number; winRate: nu
 type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
 type PlayerBelief = { player: number; certainOut: number[]; softReads: SoftRead[] };
 type WeightedSample = { hands: Tile[][]; weight: number };
+type SnakeRow = { tiles: PlacedTile[]; turn: PlacedTile | null };
 
 const names = ['You', 'Rosa', 'Tino'];
 const dotMap: Record<number, number[]> = {
@@ -408,21 +409,31 @@ function Half({ value }: { value: number }) {
   return <span className={`tile-half value-${value}`} aria-label={`${value}`}>{Array.from({ length: 9 }, (_, index) => <i key={index} className={dotMap[value].includes(index) ? 'pip on' : 'pip'} />)}</span>;
 }
 
-function Domino({ tile, small = false, selected = false, disabled = false, justPlayed = false, onClick }: { tile: Tile; small?: boolean; selected?: boolean; disabled?: boolean; justPlayed?: boolean; onClick?: () => void }) {
+function Domino({ tile, small = false, vertical = false, selected = false, disabled = false, justPlayed = false, onClick }: { tile: Tile; small?: boolean; vertical?: boolean; selected?: boolean; disabled?: boolean; justPlayed?: boolean; onClick?: () => void }) {
   return (
-    <button className={`domino ${small ? 'small' : ''} ${selected ? 'selected' : ''} ${disabled ? 'unplayable' : ''} ${justPlayed ? 'just-played' : ''}`} aria-label={`Domino ${tile.a}-${tile.b}`} disabled={disabled} onClick={onClick} type="button">
+    <button className={`domino ${small ? 'small' : ''} ${vertical ? 'vertical' : ''} ${selected ? 'selected' : ''} ${disabled ? 'unplayable' : ''} ${justPlayed ? 'just-played' : ''}`} aria-label={`Domino ${tile.a}-${tile.b}`} disabled={disabled} onClick={onClick} type="button">
       <Half value={tile.a} /><span className="tile-divider" /><Half value={tile.b} />
     </button>
   );
 }
 
-function BoardDomino({ tile, justPlayed }: { tile: PlacedTile; justPlayed: boolean }) {
-  return <Domino tile={{ id: tile.id, a: tile.left, b: tile.right }} small disabled justPlayed={justPlayed} />;
+function BoardDomino({ tile, justPlayed, reversed = false, vertical = false }: { tile: PlacedTile; justPlayed: boolean; reversed?: boolean; vertical?: boolean }) {
+  const shown = reversed
+    ? { id: tile.id, a: tile.right, b: tile.left }
+    : { id: tile.id, a: tile.left, b: tile.right };
+  return <Domino tile={shown} small vertical={vertical} disabled justPlayed={justPlayed} />;
 }
 
-function makeSnakeRows(chain: PlacedTile[], rowSize = 8): PlacedTile[][] {
-  const rows: PlacedTile[][] = [];
-  for (let index = 0; index < chain.length; index += rowSize) rows.push(chain.slice(index, index + rowSize));
+function makeSnakeRows(chain: PlacedTile[], rowSize = 8): SnakeRow[] {
+  const rows: SnakeRow[] = [];
+  let index = 0;
+  while (index < chain.length) {
+    const tiles = chain.slice(index, index + rowSize);
+    index += tiles.length;
+    const turn = index < chain.length ? chain[index] : null;
+    if (turn) index += 1;
+    rows.push({ tiles, turn });
+  }
   return rows;
 }
 
@@ -581,11 +592,15 @@ export default function Home() {
                   {snakeRows.map((row, rowIndex) => {
                     const direction = rowIndex % 2 === 0 ? 'right' : 'left';
                     const isLast = rowIndex === snakeRows.length - 1;
-                    return <div className={`snake-row toward-${direction}`} key={`row-${rowIndex}`} style={{ '--tiles-in-row': row.length } as CSSProperties}>
+                    const endsOnTurn = isLast && row.turn !== null;
+                    return <div className={`snake-row toward-${direction} ${endsOnTurn ? 'ends-on-turn' : ''}`} key={`row-${rowIndex}`}>
                       {rowIndex === 0 && leftEnd !== null && <span className="edge-number start-edge">{leftEnd}</span>}
-                      {row.map((tile) => <BoardDomino key={tile.id} tile={tile} justPlayed={game.lastAction?.kind === 'play' && game.lastAction.tileId === tile.id} />)}
-                      {isLast && rightEnd !== null && <span className="edge-number end-edge">{rightEnd}</span>}
-                      {!isLast && <i className="snake-bend" aria-hidden="true" />}
+                      {row.tiles.map((tile) => <BoardDomino key={tile.id} tile={tile} reversed={direction === 'left'} justPlayed={game.lastAction?.kind === 'play' && game.lastAction.tileId === tile.id} />)}
+                      {isLast && !endsOnTurn && rightEnd !== null && <span className="edge-number end-edge">{rightEnd}</span>}
+                      {row.turn && <span className="snake-turn">
+                        <BoardDomino tile={row.turn} vertical justPlayed={game.lastAction?.kind === 'play' && game.lastAction.tileId === row.turn.id} />
+                        {endsOnTurn && rightEnd !== null && <span className="edge-number turn-end">{rightEnd}</span>}
+                      </span>}
                     </div>;
                   })}
                 </div>
