@@ -22,7 +22,7 @@ The live coach is optimized for responsiveness. After a round, Deep Review can s
 
 The release selector is benchmark-gated. Deeper tree search cannot control a move until it beats the current policy in balanced matched-deal testing.
 
-An experimental adaptive analyzer is available to the reliability benchmark. It accumulates paired simulation batches at 120, 250, 500, 1,000, and 2,000 samples, requires recommendation and coaching-label stability across consecutive checks, and reports unresolved decisions cautiously at its hard cap. It is not used by the live coach unless the large reliability gate passes.
+An experimental Adaptive Analyzer V2 is available to the reliability benchmark. It measures disagreement between independent simulation batches, delays early stopping according to phase and legal-move count, requires a fresh confirmation batch, and reports statistically indistinguishable moves as one plausible-best set. Recommendation confidence is separate from mistake-label confidence, so unclear coaching labels abstain. It is not used by the live coach unless a new held-out reliability gate passes.
 
 ## Run locally
 
@@ -45,14 +45,17 @@ npm run benchmark:reliability:quick
 
 Run the full 2,160-round policy benchmark with `npm run benchmark`. Run the standard 16-position analyzer study with `npm run benchmark:reliability`. See [BENCHMARK.md](./BENCHMARK.md) for methodology, confidence intervals, current results, and search experiments.
 
-The checkpointed 400-position adaptive study uses six worker threads:
+Calibrate the coaching-label policy on the separate 80-position development seed with six worker threads:
 
 ```sh
-caffeinate -i npm run benchmark:reliability:overnight
+caffeinate -i npm run benchmark:reliability:develop
+npm run benchmark:reliability:calibrate
 ```
 
-Resume an interrupted run without recalculating completed positions:
+After the policy is locked, run the new checkpointed 400-position held-out study once:
 
 ```sh
-caffeinate -i npm run benchmark:reliability:overnight -- --resume
+caffeinate -i npm run benchmark:reliability:holdout
 ```
+
+Add `-- --resume` to either long benchmark command after an interruption. The completed V1 400-position study under `benchmarks/` is frozen and is never used for V2 tuning.

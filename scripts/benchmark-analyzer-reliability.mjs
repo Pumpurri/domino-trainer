@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
   ADAPTIVE_ANALYSIS_VERSION,
+  DEFAULT_ADAPTIVE_MISTAKE_POLICY,
   DEFAULT_ADAPTIVE_STAGES,
 } from '../app/adaptive-analysis.ts';
 import {
@@ -29,6 +30,19 @@ function positiveInteger(value, fallback, label) {
   return parsed;
 }
 
+function nonnegativeNumber(value, fallback, label) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be a nonnegative number.`);
+  return parsed;
+}
+
+function fraction(value, fallback, label) {
+  const parsed = nonnegativeNumber(value, fallback, label);
+  if (parsed > 1) throw new Error(`${label} must be between zero and one.`);
+  return parsed;
+}
+
 function numberList(value, fallback, label) {
   const entries = (value ?? fallback).split(',').map((entry) => Number(entry.trim()));
   if (!entries.length || entries.some((entry) => !Number.isInteger(entry) || entry <= 0)) {
@@ -46,21 +60,21 @@ function points(metric) {
 }
 
 function metricRow(label, row) {
-  return `${label} | ${percent(row.topAgreement)} | ${percent(row.withinOnePoint)} | ${points(row.meanRegret)} | ${percent(row.mistakeLabelAgreement)} | ${percent(row.falsePositiveMistakes)} | ${percent(row.falseNegativeMistakes)} | ${percent(row.intervalCoverage)} | ${percent(row.repeatAcceptability)} | ${Math.round(row.runtimeMs.mean)} / ${Math.round(row.runtimeMs.p95)} ms`;
+  return `${label} | ${percent(row.exactTopAgreement)} | ${percent(row.topAgreement)} | ${percent(row.withinOnePoint)} | ${points(row.meanRegret)} | ${percent(row.mistakeLabelAgreement)} | ${percent(row.falsePositiveMistakes)} | ${percent(row.falseNegativeMistakes)} | ${percent(row.mistakeAbstentionRate)} | ${percent(row.decidedMistakeAccuracy)} | ${percent(row.repeatAcceptability)} | ${percent(row.recommendationSetStability)} | ${Math.round(row.runtimeMs.mean)} / ${Math.round(row.runtimeMs.p95)} ms`;
 }
 
 function printTable(title, fixed, adaptive, budgets) {
   console.log(`\n${title}`);
-  console.log('Analyzer | Exact top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Interval coverage | Repeat acceptable | Mean / p95 time');
-  console.log('--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---');
+  console.log('Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time');
+  console.log('--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---');
   budgets.forEach((budget) => console.log(metricRow(`Fixed ${budget}`, fixed[budget])));
   if (adaptive?.trials) console.log(metricRow('Adaptive', adaptive));
 }
 
 function markdownTable(fixed, adaptive, budgets) {
   return [
-    '| Analyzer | Exact top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Interval coverage | Repeat acceptable | Mean / p95 time |',
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    '| Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ...budgets.map((budget) => `| ${metricRow(`Fixed ${budget}`, fixed[budget])} |`),
     ...(adaptive?.trials ? [`| ${metricRow('Adaptive', adaptive)} |`] : []),
   ].join('\n');
@@ -106,6 +120,11 @@ Generated: ${new Date().toISOString()}
 - ${config.repetitions} independent repetitions per analyzer
 - Fixed budgets: ${budgets.join(', ')}
 - Adaptive stages: ${config.adaptiveStages.join(', ')}
+- Recommendation equivalence gap: ${config.adaptiveRecommendationGap} point(s)
+- Mistake practical gap: ${config.adaptiveMistakePolicy.practicalGap} point(s)
+- Mistake minimum estimated loss: ${config.adaptiveMistakePolicy.minimumGap} point(s)
+- Mistake batch agreement: ${(config.adaptiveMistakePolicy.minimumBatchAgreement * 100).toFixed(0)}%
+- Mistake practical batch agreement: ${(config.adaptiveMistakePolicy.minimumPracticalBatchAgreement * 100).toFixed(0)}%
 - Independent reference: ${config.referenceBudget} samples
 - Worker threads: ${config.workers}
 - Seed: \`${config.seed}\`
@@ -115,11 +134,11 @@ The reference is an independent high-budget estimate, not perfect ground truth. 
 
 ## Conclusion
 
-The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release gate** and ${adaptiveGate.passed ? 'can proceed to release integration' : 'must remain outside the live coach'}. It ${matchedComparison ? 'matched or improved' : 'did not match'} fixed ${comparisonBudget} on the combined near-optimality, regret, and repeatability comparison. It used ${sampleSavings.toFixed(1)}% fewer paired samples and ${runtimeSavings.toFixed(1)}% less mean wall time, while its false-positive mistake rate changed by ${falsePositiveChange >= 0 ? '+' : ''}${falsePositiveChange.toFixed(2)} percentage points.
+The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release gate** and ${adaptiveGate.passed ? 'can proceed to controlled release integration' : 'must remain outside the live coach'}. It ${matchedComparison ? 'matched or improved' : 'did not match'} fixed ${comparisonBudget} on the combined near-optimality, regret, and repeatability comparison. It used ${sampleSavings.toFixed(1)}% fewer paired samples and ${runtimeSavings.toFixed(1)}% less mean wall time, while its false-positive mistake rate changed by ${falsePositiveChange >= 0 ? '+' : ''}${falsePositiveChange.toFixed(2)} percentage points.
 
-The sampler did allocate more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. However, ${summary.adaptive.samplesUsed.p50} was the median stopping budget and ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of trials still ended uncertain. Failed release checks: ${failedChecks.join(', ')}.
+The sampler allocated more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. Its median stopping budget was ${summary.adaptive.samplesUsed.p50}, ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of recommendations ended uncertain, and ${(summary.adaptive.mistakeAbstentionRate.mean * 100).toFixed(1)}% of coaching labels abstained. Failed release checks: ${failedChecks.length ? failedChecks.join(', ') : 'none'}.
 
-The likely causes are cross-deal variability that is not captured fully by a pooled within-run interval, early stops that remain less repeatable across independent belief samples, and coaching labels near fixed severity boundaries. Opening positions and decisions with three or more legal moves remain the weakest groups. The next experiment should use between-batch uncertainty plus an independent confirmation batch before stopping, calibrate coaching labels separately from move ranking, and evaluate on a new held-out seed instead of tuning against this corpus.
+This V2 sampler widens uncertainty when independent batches disagree, requires a fresh confirmation batch before early stopping, delays decisions according to phase and legal-move count, and treats statistically equivalent moves as one plausible-best set. Recommendation confidence and mistake confidence are separate, so the coach can abstain from a mistake label even when it still offers a tentative move.
 
 ## Overall results
 
@@ -133,6 +152,9 @@ ${markdownTable(summary.overall, summary.adaptive, budgets)}
 - Maximum samples: ${summary.adaptive.samplesUsed.maximum}
 - Hard-cap rate: ${percent(summary.adaptive.hardCapRate)}
 - Uncertain-at-stop rate: ${percent(summary.adaptive.uncertainRate)}
+- Mean plausible-best set size: ${points(summary.adaptive.recommendationSetSize)}
+- Coaching-label abstention rate: ${percent(summary.adaptive.mistakeAbstentionRate)}
+- Accuracy among non-abstained coaching labels: ${percent(summary.adaptive.decidedMistakeAccuracy)}
 - Mean samples on reference-clear positions: ${points(summary.adaptive.samplesByReferenceClarity.clear)}
 - Mean samples on reference-unclear positions: ${points(summary.adaptive.samplesByReferenceClarity.unclear)}
 
@@ -172,22 +194,51 @@ const positionsPerPhase = positiveInteger(
 );
 const repetitions = positiveInteger(
   argument('repetitions') ?? process.env.MESA_RELIABILITY_REPETITIONS,
-  quick ? 2 : 3,
+  quick ? 1 : 3,
   'Independent repetitions',
 );
 const budgets = numberList(
   argument('budgets') ?? process.env.MESA_RELIABILITY_BUDGETS,
-  '120,500,1000,2000',
+  quick ? '60,120' : '120,500,1000,2000',
   'Budgets',
 );
 const adaptiveStages = numberList(
   argument('adaptive-stages') ?? process.env.MESA_RELIABILITY_ADAPTIVE_STAGES,
-  DEFAULT_ADAPTIVE_STAGES.join(','),
+  quick ? '60,120,250' : DEFAULT_ADAPTIVE_STAGES.join(','),
   'Adaptive stages',
 );
+const adaptiveRecommendationGap = nonnegativeNumber(
+  argument('adaptive-recommendation-gap') ?? process.env.MESA_RELIABILITY_ADAPTIVE_RECOMMENDATION_GAP,
+  1,
+  'Adaptive recommendation gap',
+);
+const adaptiveMistakePolicy = {
+  ...DEFAULT_ADAPTIVE_MISTAKE_POLICY,
+  practicalGap: nonnegativeNumber(
+    argument('adaptive-mistake-practical-gap') ?? process.env.MESA_RELIABILITY_ADAPTIVE_MISTAKE_PRACTICAL_GAP,
+    DEFAULT_ADAPTIVE_MISTAKE_POLICY.practicalGap,
+    'Adaptive mistake practical gap',
+  ),
+  minimumGap: nonnegativeNumber(
+    argument('adaptive-mistake-minimum-gap') ?? process.env.MESA_RELIABILITY_ADAPTIVE_MISTAKE_MINIMUM_GAP,
+    DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumGap,
+    'Adaptive mistake minimum gap',
+  ),
+  minimumBatchAgreement: fraction(
+    argument('adaptive-mistake-batch-agreement') ?? process.env.MESA_RELIABILITY_ADAPTIVE_MISTAKE_BATCH_AGREEMENT,
+    DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumBatchAgreement,
+    'Adaptive mistake batch agreement',
+  ),
+  minimumPracticalBatchAgreement: fraction(
+    argument('adaptive-mistake-practical-batch-agreement')
+      ?? process.env.MESA_RELIABILITY_ADAPTIVE_MISTAKE_PRACTICAL_BATCH_AGREEMENT,
+    DEFAULT_ADAPTIVE_MISTAKE_POLICY.minimumPracticalBatchAgreement,
+    'Adaptive mistake practical batch agreement',
+  ),
+};
 const referenceBudget = positiveInteger(
   argument('reference-samples') ?? process.env.MESA_RELIABILITY_REFERENCE_SAMPLES,
-  quick ? 2000 : 4000,
+  quick ? 500 : 4000,
   'Reference sample count',
 );
 const confidenceResamples = positiveInteger(
@@ -206,7 +257,7 @@ const workers = positiveInteger(
   'Worker count',
 );
 const config = {
-  schema: 2,
+  schema: 3,
   seed,
   positionsPerPhase,
   repetitions,
@@ -217,6 +268,8 @@ const config = {
   includeAdaptive: !fixedOnly,
   adaptiveStages,
   adaptiveVersion: ADAPTIVE_ANALYSIS_VERSION,
+  adaptiveRecommendationGap,
+  adaptiveMistakePolicy,
 };
 
 console.log('MESA QUINCE ANALYZER RELIABILITY BENCHMARK');
@@ -244,7 +297,16 @@ let completed = priorResults.length;
 const freshResults = pendingPositions.length
   ? await evaluateReliabilityParallel({
     positions: pendingPositions,
-    options: { budgets, repetitions, referenceBudget, seed, includeAdaptive: !fixedOnly, adaptiveStages },
+    options: {
+      budgets,
+      repetitions,
+      referenceBudget,
+      seed,
+      includeAdaptive: !fixedOnly,
+      adaptiveStages,
+      adaptiveRecommendationGap,
+      adaptiveMistakePolicy,
+    },
     workerCount: workers,
     onProgress: (positionId) => {
       completed += 1;
@@ -314,6 +376,8 @@ if (reportPath) {
 console.log('\nNOTES');
 console.log('- Each phase contributes the same number of positions. Confidence intervals resample complete positions, not individual repeated runs.');
 console.log('- Each fixed run, adaptive batch, and reference uses independently seeded plausible hidden deals consistent with public evidence. Every legal move within one batch receives the same paired deals.');
-console.log('- Adaptive stages accumulate prior paired outcomes and require the same leader across at least two checks before stopping early.');
+console.log('- Adaptive stages accumulate prior paired outcomes, widen intervals for between-batch disagreement, and require a fresh independent confirmation batch before stopping early.');
+console.log('- Phase and legal-move count set minimum budgets. Statistically equivalent leaders are reported as one plausible-best set.');
+console.log('- Recommendation confidence is independent from mistake-label confidence; unclear mistake labels abstain.');
 console.log('- Regret is the reference win-rate gap between its leading move and the tested analyzer selected move.');
 console.log('- The reference is a larger independent estimate, not perfect ground truth.');

@@ -14,6 +14,7 @@ import {
   ADAPTIVE_ANALYSIS_VERSION,
   DEFAULT_ADAPTIVE_STAGES,
   pairedRatedMoveDifference,
+  plausibleBestMoveKeys,
   runAdaptiveAnalysis,
 } from '../app/adaptive-analysis.ts';
 import { createMatchedDeal, gameFromMatchedDeal } from './benchmark-core.mjs';
@@ -150,11 +151,24 @@ function runAnalysis(safeGame, budget, seedSalt) {
   return { ranked, elapsedMs: performance.now() - started };
 }
 
-async function runAdaptiveBenchmarkAnalysis(safeGame, playedKey, stages, seedSalt) {
+async function runAdaptiveBenchmarkAnalysis(
+  safeGame,
+  playedKey,
+  phase,
+  branching,
+  stages,
+  seedSalt,
+  recommendationPracticalGap,
+  mistakePolicy,
+) {
   const started = performance.now();
   const adaptive = await runAdaptiveAnalysis({
     stages,
     playedKey,
+    phase,
+    branching,
+    recommendationPracticalGap,
+    mistakePolicy,
     analyzeBatch: (batchSamples, stageIndex) => runAnalysis(
       safeGame,
       batchSamples,
@@ -170,6 +184,7 @@ function evaluatedTrial({
   elapsedMs,
   choice,
   referenceTopKey,
+  referenceBestKeys,
   referenceChoice,
   referenceRates,
   referenceBestRate,
@@ -182,7 +197,8 @@ function evaluatedTrial({
   return {
     repetition,
     topKey,
-    topAgreement: topKey === referenceTopKey,
+    exactTopAgreement: topKey === referenceTopKey,
+    topAgreement: referenceBestKeys.includes(topKey),
     regret: Math.max(0, referenceBestRate - selectedReferenceRate),
     withinOnePoint: referenceBestRate - selectedReferenceRate <= 1,
     verdict: choice.verdict,
@@ -190,6 +206,10 @@ function evaluatedTrial({
     mistakeLabelAgreement: choice.confidentMistake === referenceChoice.confidentMistake,
     falsePositiveMistake: choice.confidentMistake && !referenceChoice.confidentMistake,
     falseNegativeMistake: !choice.confidentMistake && referenceChoice.confidentMistake,
+    mistakeAbstained: choice.mistakeConfidence === 'uncertain',
+    mistakeDecisionCorrect: choice.mistakeConfidence === 'uncertain'
+      ? null
+      : choice.confidentMistake === referenceChoice.confidentMistake,
     intervalCoverage: choice.interval[0] <= referenceChoice.gap && choice.interval[1] >= referenceChoice.gap,
     exactOracleAgreement: exactKeys ? exactKeys.includes(topKey) : null,
     elapsedMs,
@@ -203,11 +223,14 @@ export async function evaluateReliabilityPosition(position, {
   referenceBudget = 2000,
   includeAdaptive = true,
   adaptiveStages = DEFAULT_ADAPTIVE_STAGES,
+  adaptiveRecommendationGap = 1,
+  adaptiveMistakePolicy,
   seed = 'mesa-quince-reliability-v1',
 } = {}) {
   const safeGame = informationSafeBenchmarkGame(position.game);
   const reference = runAnalysis(safeGame, referenceBudget, `${seed}|${position.id}|reference`);
   const referenceTopKey = moveKey(reference.ranked[0]);
+  const referenceBestKeys = plausibleBestMoveKeys(reference.ranked, [reference.ranked], adaptiveRecommendationGap);
   const referenceChoice = classifyAnalyzedChoice(reference.ranked, position.playedKey);
   const referenceRates = new Map(reference.ranked.map((move) => [moveKey(move), move.winRate]));
   const referenceBestRate = reference.ranked[0].winRate;
@@ -225,10 +248,12 @@ export async function evaluateReliabilityPosition(position, {
         elapsedMs: analysis.elapsedMs,
         choice,
         referenceTopKey,
+        referenceBestKeys,
         referenceChoice,
         referenceRates,
         referenceBestRate,
         exactKeys,
+        metadata: { recommendationKeys: [moveKey(analysis.ranked[0])] },
       }));
     }
     byBudget[budget] = { trials };
@@ -240,8 +265,12 @@ export async function evaluateReliabilityPosition(position, {
       const analysis = await runAdaptiveBenchmarkAnalysis(
         safeGame,
         position.playedKey,
+        position.phase,
+        legalMovesFor(position.game.hands[0], position.game.chain).length,
         adaptiveStages,
         `${seed}|${position.id}|adaptive|repeat-${repetition}`,
+        adaptiveRecommendationGap,
+        adaptiveMistakePolicy,
       );
       adaptiveTrials.push(evaluatedTrial({
         repetition,
@@ -249,6 +278,7 @@ export async function evaluateReliabilityPosition(position, {
         elapsedMs: analysis.elapsedMs,
         choice: analysis.adaptive.choice,
         referenceTopKey,
+        referenceBestKeys,
         referenceChoice,
         referenceRates,
         referenceBestRate,
@@ -258,6 +288,15 @@ export async function evaluateReliabilityPosition(position, {
           stoppedAt: analysis.adaptive.stoppedAt,
           stopReason: analysis.adaptive.stopReason,
           recommendationConfidence: analysis.adaptive.recommendationConfidence,
+          recommendationKeys: analysis.adaptive.plausibleBestKeys,
+          minimumSamples: analysis.adaptive.minimumSamples,
+          mistakeConfidence: analysis.adaptive.choice?.mistakeConfidence ?? 'uncertain',
+          mistakeAssessment: analysis.adaptive.choice?.assessment ?? 'uncertain',
+          playedInPlausibleBest: analysis.adaptive.choice?.plausibleBestKeys.includes(position.playedKey) ?? false,
+          choiceGap: analysis.adaptive.choice?.gap ?? 0,
+          choiceInterval: analysis.adaptive.choice?.interval ?? [0, 0],
+          choiceBatchAgreement: analysis.adaptive.choice?.batchAgreement ?? 0,
+          choicePracticalBatchAgreement: analysis.adaptive.choice?.practicalBatchAgreement ?? 0,
           stages: analysis.adaptive.stages,
         },
       }));
@@ -274,6 +313,7 @@ export async function evaluateReliabilityPosition(position, {
     reference: {
       budget: referenceBudget,
       topKey: referenceTopKey,
+      acceptableTopKeys: referenceBestKeys,
       verdict: referenceChoice.verdict,
       confidentMistake: referenceChoice.confidentMistake,
       gap: referenceChoice.gap,
@@ -321,6 +361,20 @@ function summarizeTrials(positionResults, trialsFor, seed, confidenceResamples) 
   const acceptablyStablePositions = positionResults.map((position) => (
     trialsFor(position).every(({ withinOnePoint }) => withinOnePoint) ? 1 : 0
   ));
+  const recommendationSetStablePositions = positionResults.map((position) => {
+    const sets = trialsFor(position).map((trial) => new Set(trial.recommendationKeys ?? [trial.topKey]));
+    const intersection = sets.slice(1).reduce(
+      (remaining, keys) => new Set([...remaining].filter((key) => keys.has(key))),
+      sets[0] ?? new Set(),
+    );
+    return intersection.size > 0 ? 1 : 0;
+  });
+  const decidedMistakeValues = positionResults.flatMap((position) => {
+    const decided = trialsFor(position).filter((trial) => trial.mistakeDecisionCorrect !== null);
+    return decided.length
+      ? [decided.filter((trial) => trial.mistakeDecisionCorrect).length / decided.length]
+      : [];
+  });
   const exactPositions = positionResults.filter((position) => position.exactOracleKeys);
   const metric = (label, read) => intervalForPositionMeans(
     trialValues(read),
@@ -331,6 +385,7 @@ function summarizeTrials(positionResults, trialsFor, seed, confidenceResamples) 
   return {
     positions: positionResults.length,
     trials: allTrials.length,
+    exactTopAgreement: metric('exact-top-agreement', (trial) => trial.exactTopAgreement ? 1 : 0),
     topAgreement: metric('top-agreement', (trial) => trial.topAgreement ? 1 : 0),
     withinOnePoint: metric('within-one-point', (trial) => trial.withinOnePoint ? 1 : 0),
     meanRegret: metric('regret', (trial) => trial.regret),
@@ -338,9 +393,20 @@ function summarizeTrials(positionResults, trialsFor, seed, confidenceResamples) 
     mistakeLabelAgreement: metric('mistake-label-agreement', (trial) => trial.mistakeLabelAgreement ? 1 : 0),
     falsePositiveMistakes: metric('false-positive', (trial) => trial.falsePositiveMistake ? 1 : 0),
     falseNegativeMistakes: metric('false-negative', (trial) => trial.falseNegativeMistake ? 1 : 0),
+    mistakeAbstentionRate: metric('mistake-abstention', (trial) => trial.mistakeAbstained ? 1 : 0),
+    decidedMistakeAccuracy: intervalForPositionMeans(
+      decidedMistakeValues,
+      `${seed}|decided-mistake-accuracy`,
+      confidenceResamples,
+    ),
     intervalCoverage: metric('interval-coverage', (trial) => trial.intervalCoverage ? 1 : 0),
     repeatStability: intervalForPositionMeans(stablePositions, `${seed}|repeat-stability`, confidenceResamples),
     repeatAcceptability: intervalForPositionMeans(acceptablyStablePositions, `${seed}|repeat-acceptability`, confidenceResamples),
+    recommendationSetStability: intervalForPositionMeans(
+      recommendationSetStablePositions,
+      `${seed}|recommendation-set-stability`,
+      confidenceResamples,
+    ),
     exactOracleAgreement: exactPositions.length
       ? intervalForPositionMeans(exactPositions.map((position) => {
         const trials = trialsFor(position);
@@ -396,6 +462,10 @@ function summarizeAdaptive(positionResults, seed, confidenceResamples) {
     stoppingStages,
     hardCapRate: rate('hard-cap', (trial) => trial.stopReason === 'hard-cap' ? 1 : 0),
     uncertainRate: rate('uncertain', (trial) => trial.recommendationConfidence === 'uncertain' ? 1 : 0),
+    recommendationSetSize: intervalForPositionMeans(relevant.map((position) => {
+      const trials = trialsFor(position);
+      return trials.reduce((sum, trial) => sum + (trial.recommendationKeys?.length ?? 1), 0) / trials.length;
+    }), `${seed}|adaptive|recommendation-set-size`, confidenceResamples),
     samplesByReferenceClarity: {
       clear: meanSamplesFor(relevant.filter((position) => position.reference.clearRecommendation), 'clear'),
       unclear: meanSamplesFor(relevant.filter((position) => !position.reference.clearRecommendation), 'unclear'),

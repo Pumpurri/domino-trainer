@@ -192,27 +192,13 @@ No tested budget passed every provisional gate. In particular, 500 samples impro
 
 On the balanced run, mean analysis time ranged from 1.4 seconds at 120 samples to 19.0 seconds at 2,000 under eight-core contention. The 2,000-sample opening p95 was 117.3 seconds. Future scheduling work should allocate across decisions according to legal-action count rather than treating every position as equal.
 
-## Experimental adaptive reliability gate
+## Frozen Adaptive Analyzer V1 study
 
 The experimental analyzer accumulates independent paired batches at cumulative targets of 120, 250, 500, 1,000, and 2,000 representatives. Every move receives the same hidden deals within a batch, and earlier outcomes remain in the estimate. Early stopping requires the same leading move across at least two consecutive checks, a paired 95% interval whose lower bound exceeds a one-point practical threshold against every competitor, and a stable coaching verdict. At the hard cap, unresolved recommendations are explicitly marked uncertain.
 
 This capability is benchmark-only until it passes every release gate. Rosa, Tino, the live 120-sample coach, and the 500-sample Deep Review remain unchanged.
 
-Run the checkpointed 400-position study with half of this development machine's 12 logical cores:
-
-```sh
-caffeinate -i npm run benchmark:reliability:overnight
-```
-
-The command evaluates 100 positions in each phase, three repetitions of fixed 120, fixed 500, fixed 2,000, and adaptive analysis, plus an independent 5,000-sample reference. It writes atomic per-position checkpoints under `outputs/adaptive-reliability-400.checkpoint` and final reports under `benchmarks/`.
-
-Resume after an interruption:
-
-```sh
-caffeinate -i npm run benchmark:reliability:overnight -- --resume
-```
-
-The checkpoint manifest includes the seed, budgets, adaptive version and stages, reference budget, repetitions, confidence resamples, and worker count. A mismatched resume is rejected instead of mixing incompatible results. Optional controls for other runs are `--adaptive-stages=LIST`, `--checkpoint=PATH`, `--resume`, `--report=PATH`, and `--fixed-only` in addition to the earlier reliability controls.
+The completed 400-position V1 study is stored in `benchmarks/adaptive-reliability-400.json` and `benchmarks/adaptive-reliability-400.md`. That seed and corpus are frozen as historical evidence. V2 development and label calibration must not read them.
 
 ## 400-position adaptive result
 
@@ -230,3 +216,29 @@ Adaptive analysis used a mean of 1,373 samples, 31.4% fewer than fixed 2,000, bu
 The adaptive release gate failed. It passed corpus size, within-one-point quality, and regret, but missed mistake-label agreement at 94.3% versus the 95% requirement, false positives at 2.08% versus the 2% maximum, and repeat acceptability at 88.8% versus the 90% requirement. Fixed 2,000 also failed the complete gate, narrowly missing mistake-label agreement and false positives.
 
 Adaptive analysis therefore remains outside the live coach. It did not match fixed 2,000 overall, although it slightly reduced false-positive mistakes and performed well in late games. The evidence points to cross-deal variability that pooled within-run intervals do not fully capture, early stops that are not stable enough across independent belief samples, and coaching labels near fixed severity thresholds. The next experiment should add between-batch uncertainty and an independent confirmation batch, separate coaching-label calibration from move ranking, and use a new held-out seed rather than tune against this corpus.
+
+## Adaptive Analyzer V2 protocol
+
+V2 directly addresses the V1 failure modes:
+
+- Its interval is never narrower than the pooled paired interval and widens when independently seeded batches disagree.
+- A recommendation must first become a stable candidate, then survive a fresh batch before early stopping.
+- Opening and middle decisions require at least 500 samples. Late and likely-block decisions require at least 250. Six or more legal moves require at least 1,000 regardless of phase.
+- Moves that cannot be distinguished beyond a one-point practical margin form a plausible-best set. Selecting any member is accepted for recommendation evaluation.
+- Recommendation confidence and mistake confidence are separate. A move is labeled a mistake only when its estimated loss is practical, its widened lower bound clears the label threshold, and independent batches agree. Otherwise the label abstains.
+- Mistake thresholds are configurable independently from move ranking and stopping, so they can be calibrated without changing which move the analyzer recommends.
+
+First run the distinct development corpus using no more than six worker threads:
+
+```sh
+caffeinate -i npm run benchmark:reliability:develop
+npm run benchmark:reliability:calibrate
+```
+
+The calibration command rejects any report whose seed is not explicitly a development seed. Once its policy is selected and locked in source, run the new held-out corpus exactly once:
+
+```sh
+caffeinate -i npm run benchmark:reliability:holdout
+```
+
+Both long runs use atomic per-position checkpoints and support `-- --resume`. The held-out command evaluates 100 positions in each phase, three independent repetitions, fixed 120, 500, and 2,000-sample analyzers, V2 up to 2,000 samples, and an independent 5,000-sample reference. The live coach remains unchanged unless V2 passes every preregistered gate.
