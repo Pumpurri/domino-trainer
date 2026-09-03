@@ -13,6 +13,8 @@
     "benchmark": "node --experimental-strip-types scripts/benchmark-engine.mjs",
     "benchmark:quick": "node --experimental-strip-types scripts/benchmark-engine.mjs --quick",
     "benchmark:latency": "node --experimental-strip-types scripts/benchmark-analysis-latency.mjs",
+    "benchmark:reliability": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs",
+    "benchmark:reliability:quick": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --quick",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {

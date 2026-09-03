@@ -38,6 +38,7 @@ npm test
 npm run build
 npm run benchmark:quick
 npm run benchmark:latency
+npm run benchmark:reliability:quick
 ```
 
-Run the full 2,160-round benchmark with `npm run benchmark`. See [BENCHMARK.md](./BENCHMARK.md) for methodology, confidence intervals, current results, and search experiments.
+Run the full 2,160-round policy benchmark with `npm run benchmark`. Run the standard 16-position analyzer study with `npm run benchmark:reliability`. See [BENCHMARK.md](./BENCHMARK.md) for methodology, confidence intervals, current results, and search experiments.

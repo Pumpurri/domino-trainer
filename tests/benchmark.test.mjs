@@ -10,6 +10,14 @@ import {
 } from '../scripts/benchmark-core.mjs';
 import { runMatchedBenchmarkParallel } from '../scripts/benchmark-parallel.mjs';
 import { strategicScenarios } from '../scripts/strategic-scenarios.mjs';
+import {
+  RELIABILITY_PHASES,
+  collectDecisionCorpus,
+  evaluateReliabilityPosition,
+  informationSafeBenchmarkGame,
+  summarizeReliability,
+} from '../scripts/analyzer-reliability-core.mjs';
+import { evaluateReliabilityParallel } from '../scripts/analyzer-reliability-parallel.mjs';
 
 test('matched schedule puts every strategy in every seat equally', () => {
   for (const strategy of STRATEGIES) {
@@ -59,4 +67,54 @@ test('parallel and single-threaded benchmarks produce identical game results', a
   const sequential = runMatchedBenchmark(options);
   const parallel = await runMatchedBenchmarkParallel({ ...options, workerCount: 2 });
   assert.deepEqual(parallel, sequential);
+});
+
+test('reliability corpus is balanced across realistic strategic phases', () => {
+  const positions = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-corpus-test' });
+  assert.deepEqual(positions.map(({ phase }) => phase), RELIABILITY_PHASES);
+  positions.forEach((position) => {
+    assert.ok(legalMovesFor(position.game.hands[0], position.game.chain).length > 1);
+    const safe = informationSafeBenchmarkGame(position.game);
+    assert.deepEqual(safe.hands[0], position.game.hands[0]);
+    assert.ok(safe.hands.slice(1).flat().every(({ a, b }) => a === -1 && b === -1));
+  });
+});
+
+test('reliability evaluation compares independent budgets against one reference', () => {
+  const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-evaluation-test' });
+  const evaluated = evaluateReliabilityPosition(position, {
+    budgets: [4, 8],
+    repetitions: 2,
+    referenceBudget: 12,
+    seed: 'reliability-evaluation-test',
+  });
+  assert.equal(evaluated.budgets[4].trials.length, 2);
+  assert.equal(evaluated.budgets[8].trials.length, 2);
+  assert.ok(evaluated.budgets[4].trials.every(({ regret }) => regret >= 0));
+  assert.ok(evaluated.budgets[8].trials.every(({ intervalCoverage }) => typeof intervalCoverage === 'boolean'));
+  const summary = summarizeReliability([evaluated], {
+    budgets: [4, 8],
+    seed: 'reliability-evaluation-test',
+    confidenceResamples: 20,
+  });
+  assert.equal(summary.positions, 1);
+  assert.equal(summary.overall[4].trials, 2);
+  assert.equal(summary.overall[8].positions, 1);
+  assert.equal(Object.values(summary.branchingCounts).reduce((sum, count) => sum + count, 0), 1);
+});
+
+test('parallel reliability workers preserve deterministic decisions and labels', async () => {
+  const positions = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-parallel-test' }).slice(0, 2);
+  const options = { budgets: [4], repetitions: 1, referenceBudget: 8, seed: 'reliability-parallel-test' };
+  const sequential = positions.map((position) => evaluateReliabilityPosition(position, options));
+  const parallel = await evaluateReliabilityParallel({ positions, options, workerCount: 2 });
+  const decisions = (results) => results.map((result) => ({
+    id: result.id,
+    referenceTop: result.reference.topKey,
+    referenceVerdict: result.reference.verdict,
+    trialTop: result.budgets[4].trials[0].topKey,
+    trialVerdict: result.budgets[4].trials[0].verdict,
+    trialRegret: result.budgets[4].trials[0].regret,
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  assert.deepEqual(decisions(parallel), decisions(sequential));
 });

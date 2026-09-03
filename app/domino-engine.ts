@@ -1146,12 +1146,13 @@ export function createBeliefState(
   perspective = 0,
   targetCount = 900,
   styles?: OpponentStyleProfile[],
+  seedSalt = '',
 ): BeliefState {
   const particles = normalizeParticleWeights(buildParticles(
     game,
     perspective,
     targetCount,
-    beliefSeed(game, perspective, 'persistent-beliefs'),
+    beliefSeed(game, perspective, seedSalt ? `persistent-beliefs|${seedSalt}` : 'persistent-beliefs'),
     styles,
   ));
   const hardEvidenceUpdates = game.events.filter((event) => event.player !== perspective).length;

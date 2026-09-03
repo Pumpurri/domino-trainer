@@ -139,6 +139,19 @@ test('persistent beliefs ignore the real hidden tile identities and survive unch
   assert.equal(search.uniqueDeals, Math.min(120, first.particles.length));
 });
 
+test('belief seed salts produce independent reproducible hidden-deal samples', () => {
+  const game = playingGame({ chain: [placed('1-9', 1, 9)] });
+  const first = createBeliefState(game, 0, 80, undefined, 'first-run');
+  const repeated = createBeliefState(game, 0, 80, undefined, 'first-run');
+  const independent = createBeliefState(game, 0, 80, undefined, 'second-run');
+  const signatures = (state) => state.particles.map((particle) => (
+    particle.hands.slice(1).flat().map(({ id }) => id).sort().join(',')
+  ));
+
+  assert.deepEqual(first.particles, repeated.particles);
+  assert.notDeepEqual(signatures(first), signatures(independent));
+});
+
 test('a pass eliminates impossible particles and replenishes a thin pool', () => {
   const deck = fullSet();
   const ownHand = deck.filter(({ a }) => a >= 2).slice(0, 10);

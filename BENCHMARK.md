@@ -158,3 +158,36 @@ Each meaningful decision is evaluated on 500 weighted representatives from a new
 The finished report records exact recommendation agreement, changed recommendations, and unstable positions. A position is unstable when the recommendation changes, the deep verdict remains statistically close, confidence is low, or the paired 95% difference interval crosses zero. Deep labels replace live labels for that round in Mistake Lab, device-local progress, and information-safe exports. A later live rerender cannot overwrite a completed deep label.
 
 Deep Review does not change Rosa, Tino, or the release move selector. The matched benchmark remains the policy gate, while Deep Review measures the reliability of coaching labels with a larger per-decision budget.
+
+## Analyzer convergence and label reliability
+
+The round benchmark measures whether a playing policy wins. It does not establish whether two independent analyzer runs recommend the same move or assign the same coaching label. The separate reliability benchmark collects an equal number of real simulated decisions from opening, middle, late, and likely-block phases, then compares independently seeded 120, 500, 1,000, and 2,000-sample analyses with a separate high-budget reference.
+
+Run the quick four-position smoke test:
+
+```sh
+npm run benchmark:reliability:quick
+```
+
+Run the standard 16-position study:
+
+```sh
+npm run benchmark:reliability
+```
+
+The benchmark reports exact top-move agreement, the rate of selecting a move within one reference win-rate point, reference-estimated regret, exact and binary mistake-label agreement, false-positive and false-negative mistake calls, paired-interval coverage, independent-run repeatability, phase splits, branching, and runtime. Confidence intervals resample complete positions so repeated analyses of one position are not incorrectly treated as independent data. Small late games are also checked with the exact revealed-deal solver as a diagnostic, never as information available to the analyzer.
+
+The first balanced reliability run used four positions per phase, two independent runs per budget, an independent 2,000-sample reference, 2,000 position-level bootstrap resamples, and eight worker threads. Only 6 of 16 reference recommendations were statistically clear, which is why exact top agreement must be read alongside regret and paired uncertainty.
+
+| Samples | Exact top | Within 1 point | Mean regret | Mistake-label agreement | False-positive mistakes | Repeatably acceptable |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 120 | 62.5% [46.9, 78.1] | 62.5% [46.9, 78.1] | 1.15 [0.59, 1.77] | 78.1% [59.4, 93.8] | 3.1% [0.0, 9.4] | 37.5% [12.5, 62.5] |
+| 500 | 75.0% [59.4, 90.6] | 78.1% [62.5, 90.6] | 0.63 [0.18, 1.25] | 78.1% [59.4, 93.8] | 3.1% [0.0, 9.4] | 62.5% [37.5, 87.5] |
+| 1,000 | 62.5% [43.8, 81.3] | 65.6% [46.9, 84.4] | 0.93 [0.37, 1.61] | 84.4% [65.6, 100.0] | 0.0% | 50.0% [25.0, 75.0] |
+| 2,000 | 93.8% [84.4, 100.0] | 96.9% [90.6, 100.0] | 0.05 [0.00, 0.14] | 84.4% [65.6, 100.0] | 0.0% | 93.8% [81.3, 100.0] |
+
+Five endgame positions were small enough for the deal-specific exact solver. The information-safe 2,000-sample reference chose one of the exact winning actions in all five, but this small diagnostic is not a general accuracy claim.
+
+No tested budget passed every provisional gate. In particular, 500 samples improved mean regret but did not make coaching labels reliable enough to treat as ground truth. The non-monotonic 1,000-sample result also shows why a single seeded run is misleading. Fixed live and deep budgets remain in place, and Deep Review remains a stronger second opinion with uncertainty labels. Adaptive stopping should not be enabled until it is tested against a larger corpus and uses repeated agreement or sequential confidence rules.
+
+On the balanced run, mean analysis time ranged from 1.4 seconds at 120 samples to 19.0 seconds at 2,000 under eight-core contention. The 2,000-sample opening p95 was 117.3 seconds. Future scheduling work should allocate across decisions according to legal-action count rather than treating every position as equal.
