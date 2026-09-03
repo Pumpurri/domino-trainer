@@ -125,7 +125,8 @@ test('persistent beliefs ignore the real hidden tile identities and survive unch
   assert.strictEqual(updateBeliefState(first, base, 0, 140), first);
   const ranked = analyzeMoves(base, 999, first);
   const search = ranked[0].treeSearch;
-  assert.equal(ranked.reduce((sum, move) => sum + move.samples, 0), search.baseIterations + search.extraIterations);
+  assert.equal(ranked.reduce((sum, move) => sum + move.samples, 0), search.baseIterations);
+  assert.equal(ranked.reduce((sum, move) => sum + move.treeSearch.visits, 0), search.extraIterations);
   assert.equal(search.uniqueDeals, Math.min(120, first.particles.length));
 });
 
@@ -282,13 +283,23 @@ test('information-set tree search grows beyond three turns and focuses visits', 
   });
   const ranked = analyzeMoves(game, 80);
   const search = ranked[0].treeSearch;
-  const visits = ranked.map(({ samples }) => samples);
+  const visits = ranked.map((move) => move.treeSearch.visits);
 
   assert.ok(search.deepestPly > 3);
   assert.ok(search.informationSets > ranked.length);
   assert.ok(search.uniqueDeals > 1);
-  assert.equal(visits.reduce((sum, count) => sum + count, 0), search.baseIterations + search.extraIterations);
-  assert.ok(Math.max(...visits) > Math.min(...visits));
+  assert.ok(search.averageTreePlies > 1);
+  assert.ok(search.averageTreePlies <= search.deepestPly);
+  assert.ok(search.revisitedActionRate > 0 && search.revisitedActionRate <= 1);
+  assert.ok(search.multiVisitInformationSets > 0);
+  assert.equal(visits.reduce((sum, count) => sum + count, 0), search.extraIterations);
+  const pairedBaseVisits = search.baseIterations / ranked.length;
+  assert.ok(Number.isInteger(pairedBaseVisits));
+  assert.ok(ranked.every((move) => move.samples === pairedBaseVisits));
+  assert.ok(ranked.every((move) => move.treeSearch.pairedBaseWins.length === pairedBaseVisits));
+  assert.ok(ranked.every((move) => move.treeSearch.pairedBaseWins.every((value) => value === 0 || value === 1)));
+  assert.ok(Math.max(...visits) > 0);
+  assert.ok(visits.filter((count) => count > 0).length <= 2);
 });
 
 test('close information-set decisions receive an additional simulation budget', () => {
@@ -314,4 +325,9 @@ test('the exact endgame solver finds a forced final-tile win', () => {
   const result = engineTesting.solveEndgame(hands, 0, 9, 0, 0, new Map());
   assert.equal(result.winner, 0);
   assert.equal(result.reason, 'empty');
+});
+
+test('tree utility matches the one-point round scoring rule', () => {
+  assert.deepEqual(engineTesting.outcomeUtility({ winner: 1, reason: 'empty', nextPlayerPassed: false, pips: [3, 0, 7] }), [0, 1, 0]);
+  assert.deepEqual(engineTesting.outcomeUtility({ winner: null, reason: 'blocked', nextPlayerPassed: false, pips: [5, 5, 12] }), [0, 0, 0]);
 });

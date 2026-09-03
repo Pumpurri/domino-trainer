@@ -4,7 +4,7 @@ The benchmark compares three policies:
 
 - `random` chooses an arbitrary legal move and provides a low-skill baseline.
 - `casual` uses the engine's phase-aware move policy.
-- `strong` samples hidden hands and uses information-set Monte Carlo tree search to compare legal moves.
+- `strong` evaluates every legal move on the same weighted hidden-hand particles with the proven information-safe rollout. Close leaders also receive deeper information-set tree analysis, but tree evidence cannot override the release policy until it demonstrates a positive paired benchmark result.
 
 ## Phase-aware policy
 
@@ -19,11 +19,11 @@ Only a pass creates a certain void. Other tile choices influence hidden-hand pro
 
 ## Information Set Monte Carlo Tree Search
 
-Each search iteration draws one plausible hidden deal from the current weighted belief particles. All iterations contribute to one shared tree of information sets, so evidence from different possible deals accumulates on the same public decisions.
+Every legal root move is first evaluated against every one of the same weighted belief particles. This paired base prevents one move from receiving easier hidden deals than another and retains the strongest previously measured policy as a safety rail.
 
-An information-set key contains the acting player's own hand plus public information: the chain ends, played tiles, hand sizes, turn, passes, and proven voids. It never contains either opponent's hidden tile identities. This restriction applies to tree selection and to the phase-aware policy used after a new branch is expanded.
+When the base leaders remain statistically close, the search adds up to 50% more iterations for those leaders. The tree learns the recommending player's future choices while Rosa and Tino use the stronger information-safe opponent model. An information-set key contains that player's own hand plus public information: chain ends, played tiles, hand sizes, turn, passes, and proven voids. It never contains either opponent's hidden tile identities.
 
-The tree can extend to twelve turns. UCT selection concentrates visits on moves that have performed well while continuing to test less-visited alternatives. Every root move receives a minimum sample, then promising moves receive more visits. When the two leaders remain inside their combined uncertainty range, the search adds up to 50% more iterations and restricts that extra budget to the leading pair.
+The tree can extend to twelve turns. UCT selection uses the real scoring objective, one for winning the round and zero otherwise. Remaining pips are reported as evidence but do not create reward for losing. The engine records effective tree depth, revisited-action rate, paired base outcomes, and paired tree outcomes so deeper search can be promoted only after it proves an improvement.
 
 ## Matched schedule
 
@@ -60,7 +60,7 @@ Run the same 120-sample search used by the interactive Strong opponent:
 npm run benchmark -- --samples=120 --json=outputs/benchmark-production.json
 ```
 
-The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for tree iterations. This preserves a broad belief pool while keeping an interactive decision responsive.
+The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for paired evaluation and close-decision tree analysis. This preserves a broad belief pool while keeping an interactive decision responsive.
 
 The main controls are:
 
@@ -85,25 +85,28 @@ Equivalent environment variables begin with `MESA_BENCH_`; see `scripts/benchmar
 
 The designed positions are transparent regression cases for agreed principles. They are not a substitute for a future expert-labeled dataset.
 
-## Current standard reference
+## Current release reference
 
-The current information-set search was evaluated on 120 matched deals, producing 2,160 balanced rounds with 80 search samples per Strong decision.
+The release selector was evaluated on 120 matched deals, producing 2,160 balanced rounds with 80 paired samples per Strong decision.
 
 | Strategy | Round win rate | Average end pips | Blocked win rate |
 | --- | ---: | ---: | ---: |
-| Random | 19.0% [17.5, 20.6] | 22.89 [22.06, 23.71] | 17.5% [15.4, 19.5] |
-| Casual | 36.9% [35.0, 38.7] | 17.28 [16.52, 18.06] | 35.8% [33.6, 37.9] |
-| Strong | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] |
+| Random | 19.3% [17.7, 21.0] | 22.55 [21.70, 23.36] | 18.1% [16.3, 19.8] |
+| Casual | 35.8% [34.1, 37.6] | 17.19 [16.37, 18.07] | 35.7% [33.5, 37.9] |
+| Strong | 42.4% [40.5, 44.5] | 16.52 [15.69, 17.33] | 42.7% [40.3, 45.1] |
 
 Strong selected the expected move in all six designed strategic positions. These figures are a regression reference for this implementation, not a claim of optimal domino play.
 
-## High-budget 500-sample check
+## Search repair experiments
 
-The same 120 matched deals and 2,160 balanced rounds were rerun with 500 search samples per Strong decision. Increasing the ISMCTS budget did not improve the policy.
+The original all-player ISMCTS regressed from 41.3% at 80 samples to 41.2% at 500. A corrected root-agent tree with win-only utility, paired root deals, and strong rollouts reached 41.7% at 80 samples. That repaired part of the regression but remained below the proven 42.4% release selector, so direct tree overrides were rejected.
 
-| ISMCTS budget | Round win rate | Average end pips | Blocked win rate | Strategic positions |
+| Policy and budget | Round win rate | Average end pips | Blocked win rate | Strategic positions |
 | --- | ---: | ---: | ---: | ---: |
-| 80 samples | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] | 6/6 |
-| 500 samples | 41.2% [39.1, 43.2] | 16.85 [16.02, 17.71] | 41.9% [39.7, 44.2] | 6/6 |
+| Original ISMCTS, 80 | 41.3% [39.5, 43.1] | 16.79 [16.09, 17.49] | 42.6% [40.5, 44.8] | 6/6 |
+| Original ISMCTS, 500 | 41.2% [39.1, 43.2] | 16.85 [16.02, 17.71] | 41.9% [39.7, 44.2] | 6/6 |
+| Corrected root-agent tree, 80 | 41.7% [39.6, 43.7] | 17.00 [16.18, 17.86] | 41.9% [39.6, 44.2] | 6/6 |
+| Release selector, 80 | 42.4% [40.5, 44.5] | 16.52 [15.69, 17.33] | 42.7% [40.3, 45.1] | 6/6 |
+| Release selector, 500 | 45.1% [43.3, 47.0] | 15.71 [14.98, 16.44] | 45.9% [43.6, 48.3] | 6/6 |
 
-The previous three-turn search scored 45.1% [43.3, 47.0] with 15.71 average end pips and a 45.9% blocked win rate at the same 500-sample budget. The current ISMCTS is therefore 3.9 percentage points worse in round win rate at equal budget. More iterations alone are not the next optimization target. The tree policy, utility signal, and information-set aggregation need investigation.
+The deeper tree remains available as diagnostic evidence for close decisions. It is not allowed to replace the release move because two independently tested override rules reduced the quick benchmark. Promotion now requires a positive paired result instead of an architectural assumption.

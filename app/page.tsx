@@ -524,7 +524,7 @@ export default function Home() {
       : sameAsBest
         ? explainSmartMove(game, chosen, comparison)
         : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
-    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} focused visits across ${chosen.treeSearch.uniqueDeals} deals`;
+    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} paired rollouts per move · ${chosen.treeSearch.visits} deep visits`;
     setGame(applyMove(game, move));
     setSelectedId(null);
     setCoach({ kind: 'feedback', rating, title, body, stat, tone });
@@ -550,7 +550,7 @@ export default function Home() {
         ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
         : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
       body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
-      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} focused visits across ${best.treeSearch.uniqueDeals} deals`,
+      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} paired rollouts per move · ${best.treeSearch.visits} deep visits`,
     });
   }
 
