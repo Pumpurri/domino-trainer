@@ -62,6 +62,8 @@ npm run benchmark -- --samples=120 --json=outputs/benchmark-production.json
 
 The coach keeps 900 persistent belief particles, then deterministically selects 120 weighted representatives for paired evaluation and close-decision tree analysis. This preserves a broad belief pool while keeping an interactive decision responsive.
 
+The browser splits those same 120 representatives across four background workers and merges their weighted outcomes. Every move still receives the exact same paired hidden deals. The work is parallelized, not statistically reduced. A completed position is cached, so asking for a hint and then playing does not repeat the analysis.
+
 The main controls are:
 
 - `--deals=N`: number of independent matched deals. Each deal creates 18 rounds.
@@ -73,6 +75,14 @@ The main controls are:
 - `--json=PATH`: optional JSON report destination.
 
 Equivalent environment variables begin with `MESA_BENCH_`; see `scripts/benchmark-engine.mjs` for their exact names.
+
+Measure the interactive opening fixture:
+
+```sh
+npm run benchmark:latency
+```
+
+On the current development machine, a ten-choice opening with 120 samples per move fell from 7,537 ms on one worker to 2,616 ms across four workers, a 2.88x wall-time speedup. The selected move and every merged base win rate were identical. Hardware and browser overhead will change the absolute time.
 
 ## Reported metrics
 
@@ -110,3 +120,13 @@ The original all-player ISMCTS regressed from 41.3% at 80 samples to 41.2% at 50
 | Release selector, 500 | 45.1% [43.3, 47.0] | 15.71 [14.98, 16.44] | 45.9% [43.6, 48.3] | 6/6 |
 
 The deeper tree remains available as diagnostic evidence for close decisions. It is not allowed to replace the release move because two independently tested override rules reduced the quick benchmark. Promotion now requires a positive paired result instead of an architectural assumption.
+
+## Counterfactual coaching and style learning
+
+Every voluntary user decision now stores an information-safe snapshot containing the public board, the user's hand, legal alternatives, paired outcomes, belief confidence, pass evidence, return-route evidence, and the recommendation available at that moment. It never stores the opponents' hidden tiles.
+
+After the round, the review reconstructs the opponents' actual hands separately and audits earlier reads. A paired difference interval classifies decisions as best, statistically close, a small miss, a mistake, or a large mistake. An alternate line is never described as guaranteed to have changed the exact result.
+
+Rosa and Tino each receive a persistent style profile based on public choices evaluated across plausible sampled hands. It tracks high-pip, double, connection, blocking, consistency, and unpredictability tendencies. The profile affects hidden-deal weights and simulated replies only after repeat observations. Changing the real hidden hand without changing public actions leaves the learned profile unchanged.
+
+The September 3 quick regression repeated the established deterministic reference exactly: Random 23.6%, Casual 37.5%, Strong 38.2%, and Strong 6/6 on strategic positions. Style adaptation is intentionally absent from the neutral matched benchmark because it represents learned history against a specific player. The tree-control gate remains closed because no tested override has beaten the 42.4% release selector in the full matched benchmark.

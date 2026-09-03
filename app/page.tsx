@@ -1,14 +1,25 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import AnalyzerWorker from './analyzer.worker?worker';
 import {
   analyzeMoves as analyzeSmartMoves,
+  buildRoundReview,
   chooseBotMove as chooseSmartBotMove,
+  createDecisionRecord,
+  createOpponentStyles,
+  describeOpponentStyle,
   estimateBeliefs as estimateSmartBeliefs,
+  mergeMoveAnalyses,
   reasonForMove as explainSmartMove,
   updateBeliefState as updateSmartBeliefState,
+  updateOpponentStyles,
   type BeliefState,
+  type DecisionRecord,
   type Difficulty,
+  type OpponentStyleProfile,
+  type RatedMove as SmartRatedMove,
+  type RoundReview,
 } from './domino-engine';
 
 type Tile = { id: string; a: number; b: number };
@@ -55,15 +66,20 @@ type Coach =
   | { kind: 'turn'; message?: string }
   | { kind: 'watching'; message: string }
   | { kind: 'hint'; title: string; body: string; confidence: string }
-  | { kind: 'feedback'; rating: string; title: string; body: string; stat: string; tone: 'great' | 'okay' | 'mistake' };
-type RatedMove = Move & { samples: number; effectiveSamples: number; winRate: number; margin: number; heuristic: number };
-type SoftRead = { value: number; direction: 'more' | 'less'; probability: number; strength: 'weak' | 'moderate' };
-type PlayerBelief = { player: number; certainOut: number[]; softReads: SoftRead[] };
-type WeightedSample = { hands: Tile[][]; weight: number };
+  | {
+    kind: 'feedback';
+    rating: string;
+    title: string;
+    body: string;
+    stat: string;
+    tone: 'great' | 'okay' | 'mistake';
+    evidence?: { known: string; inferred: string; simulated: string; uncertain: string };
+  };
 type SnakeRow = { tiles: PlacedTile[]; turn: PlacedTile | null };
 
 const names = ['You', 'Rosa', 'Tino'];
 const beliefParticleCount = 900;
+const analysisWorkerCount = 4;
 const dotMap: Record<number, number[]> = {
   0: [], 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8],
   5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8],
@@ -202,219 +218,6 @@ function applyPass(game: Game): Game {
   return finishRound(passed, possible.length === 1 ? possible[0] : null, 'blocked');
 }
 
-function moveHeuristic(move: Move, hand: Tile[], nextVoids: Set<number>): number {
-  const remaining = hand.filter((tile) => tile.id !== move.tile.id);
-  if (!remaining.length) return 1000;
-  const controlsLeft = remaining.filter((tile) => tile.a === move.newLeft || tile.b === move.newLeft).length;
-  const controlsRight = remaining.filter((tile) => tile.a === move.newRight || tile.b === move.newRight).length;
-  const pressure = (nextVoids.has(move.newLeft) ? 5 : 0) + (nextVoids.has(move.newRight) ? 5 : 0);
-  const highPips = (move.tile.a + move.tile.b) * 0.18;
-  const doubleRelief = move.tile.a === move.tile.b ? 1.2 : 0;
-  const balance = new Set(remaining.flatMap((tile) => [tile.a, tile.b])).size * 0.08;
-  return controlsLeft * 1.15 + controlsRight * 1.15 + pressure + highPips + doubleRelief + balance;
-}
-
-function seededRandom(seedText: string): () => number {
-  let seed = 2166136261;
-  for (let i = 0; i < seedText.length; i += 1) seed = Math.imul(seed ^ seedText.charCodeAt(i), 16777619);
-  return () => {
-    seed += 0x6d2b79f5;
-    let value = seed;
-    value = Math.imul(value ^ value >>> 15, value | 1);
-    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
-    return ((value ^ value >>> 14) >>> 0) / 4294967296;
-  };
-}
-
-function sampleOpponentHands(game: Game, random: () => number): Tile[][] | null {
-  const known = new Set([...game.hands[0], ...game.chain].map((tile) => tile.id));
-  const unknown = fullSet().filter((tile) => !known.has(tile.id));
-  const opponents = [1, 2].sort((a, b) => game.voids[b].size - game.voids[a].size);
-
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    let pool = shuffle(unknown, random);
-    const sampled: Tile[][] = [game.hands[0], [], []];
-    let failed = false;
-    for (const player of opponents) {
-      const allowed = pool.filter((tile) => !game.voids[player].has(tile.a) && !game.voids[player].has(tile.b));
-      if (allowed.length < game.hands[player].length) { failed = true; break; }
-      sampled[player] = allowed.slice(0, game.hands[player].length);
-      const used = new Set(sampled[player].map((tile) => tile.id));
-      pool = pool.filter((tile) => !used.has(tile.id));
-    }
-    if (!failed) return sampled;
-  }
-  return null;
-}
-
-function chainFromEnds(ends: [number | null, number | null]): PlacedTile[] {
-  const [left, right] = ends;
-  if (left === null || right === null) return [];
-  return [{ id: `belief-${left}-${right}`, a: left, b: right, left, right, player: -1 }];
-}
-
-function choiceLikelihood(game: Game, sampledHands: Tile[][]): number {
-  let logLikelihood = 0;
-
-  game.events.forEach((event, eventIndex) => {
-    if (event.kind !== 'play' || event.player === 0 || event.endsBefore[0] === null) return;
-    const reconstructed = new Map(sampledHands[event.player].map((tile) => [tile.id, tile]));
-    for (let futureIndex = eventIndex; futureIndex < game.events.length; futureIndex += 1) {
-      const future = game.events[futureIndex];
-      if (future.kind === 'play' && future.player === event.player) reconstructed.set(future.tile.id, future.tile);
-    }
-
-    const legal = legalMovesFor([...reconstructed.values()], chainFromEnds(event.endsBefore));
-    if (legal.length <= 1) return;
-    const observed = legal.find((move) => move.tile.id === event.tile.id && move.side === event.side)
-      ?? legal.find((move) => move.tile.id === event.tile.id);
-    if (!observed) return;
-
-    const scores = legal.map((move) => moveHeuristic(move, [...reconstructed.values()], new Set(event.nextVoids)));
-    const maximum = Math.max(...scores);
-    const weights = scores.map((score) => Math.exp((score - maximum) / 2.5));
-    const observedIndex = legal.indexOf(observed);
-    const strategicProbability = weights[observedIndex] / weights.reduce((sum, weight) => sum + weight, 0);
-    const humanProbability = 0.35 / legal.length + 0.65 * strategicProbability;
-    logLikelihood += Math.log(Math.max(humanProbability, 0.01));
-  });
-
-  return Math.exp(Math.max(-9, logLikelihood * 0.42));
-}
-
-function estimateBeliefs(game: Game): PlayerBelief[] {
-  const random = seededRandom(`beliefs|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`);
-  const samples: WeightedSample[] = [];
-  for (let index = 0; index < 320; index += 1) {
-    const hands = sampleOpponentHands(game, random);
-    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands) });
-  }
-
-  return [1, 2].map((player) => {
-    const certainOut = [...game.voids[player]].sort((a, b) => a - b);
-    const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
-    const prior = Array.from({ length: 10 }, (_, value) => samples.length
-      ? samples.filter((sample) => sample.hands[player].some((tile) => tile.a === value || tile.b === value)).length / samples.length
-      : 0);
-    const posterior = Array.from({ length: 10 }, (_, value) => totalWeight
-      ? samples.reduce((sum, sample) => sum + (sample.hands[player].some((tile) => tile.a === value || tile.b === value) ? sample.weight : 0), 0) / totalWeight
-      : 0);
-
-    const avoided = new Map<number, number>();
-    game.events.forEach((event) => {
-      if (event.kind !== 'play' || event.player !== player) return;
-      const [left, right] = event.endsBefore;
-      if (left === null || right === null || left === right) return;
-      const unchosenEnd = event.side === 'left' ? right : left;
-      if (event.tile.a === unchosenEnd || event.tile.b === unchosenEnd) return;
-      avoided.set(unchosenEnd, (avoided.get(unchosenEnd) ?? 0) + 1);
-    });
-
-    const softReads: SoftRead[] = [...avoided.entries()]
-      .filter(([value]) => !game.voids[player].has(value))
-      .map(([value, count]) => ({
-        value,
-        direction: 'less' as const,
-        probability: posterior[value],
-        strength: count >= 2 || posterior[value] < prior[value] - 0.1 ? 'moderate' as const : 'weak' as const,
-      }))
-      .sort((a, b) => (b.strength === 'moderate' ? 1 : 0) - (a.strength === 'moderate' ? 1 : 0))
-      .slice(0, 2);
-
-    const strongerSignal = posterior
-      .map((probability, value) => ({ value, probability, change: probability - prior[value] }))
-      .filter(({ value, change }) => !game.voids[player].has(value) && !avoided.has(value) && change >= 0.12)
-      .sort((a, b) => b.change - a.change)[0];
-    if (strongerSignal && softReads.length < 2) {
-      softReads.push({ value: strongerSignal.value, direction: 'more', probability: strongerSignal.probability, strength: 'moderate' });
-    }
-
-    return { player, certainOut, softReads };
-  });
-}
-
-function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], random: () => number): number | null {
-  const hands = sampledHands.map((hand) => [...hand]);
-  hands[0] = hands[0].filter((tile) => tile.id !== firstMove.tile.id);
-  if (!hands[0].length) return 0;
-  let left = firstMove.newLeft;
-  let right = firstMove.newRight;
-  let current = 1;
-  let passes = 0;
-
-  for (let turn = 0; turn < 80; turn += 1) {
-    const fakeChain: PlacedTile[] = [{ id: 'ends', a: left, b: right, left, right, player: 0 }];
-    const legal = legalMovesFor(hands[current], fakeChain);
-    if (!legal.length) {
-      passes += 1;
-      if (passes === 3) {
-        const totals = hands.map(pipTotal);
-        const low = Math.min(...totals);
-        const winners = totals.map((value, index) => value === low ? index : -1).filter((index) => index >= 0);
-        return winners.length === 1 ? winners[0] : null;
-      }
-    } else {
-      passes = 0;
-      const ranked = legal
-        .map((move) => ({ move, value: moveHeuristic(move, hands[current], game.voids[(current + 1) % 3]) + random() * 0.7 }))
-        .sort((a, b) => b.value - a.value);
-      const move = ranked[0].move;
-      hands[current] = hands[current].filter((tile) => tile.id !== move.tile.id);
-      left = move.newLeft;
-      right = move.newRight;
-      if (!hands[current].length) return current;
-    }
-    current = (current + 1) % 3;
-  }
-  return null;
-}
-
-function analyzeMoves(game: Game): RatedMove[] {
-  const moves = legalMovesFor(game.hands[0], game.chain);
-  if (!moves.length) return [];
-  const stateKey = `${game.round}|${game.chain.map((tile) => tile.id).join(',')}|${game.hands[0].map((tile) => tile.id).join(',')}`;
-  const random = seededRandom(stateKey);
-  const samples: WeightedSample[] = [];
-  for (let i = 0; i < 600; i += 1) {
-    const hands = sampleOpponentHands(game, random);
-    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands) });
-  }
-
-  return moves.map((move) => {
-    let weightedWins = 0;
-    let totalWeight = 0;
-    let squaredWeight = 0;
-    for (const sample of samples) {
-      totalWeight += sample.weight;
-      squaredWeight += sample.weight * sample.weight;
-      if (rolloutWinner(game, move, sample.hands, random) === 0) weightedWins += sample.weight;
-    }
-    const winRate = totalWeight ? weightedWins / totalWeight * 100 : 0;
-    const effectiveSamples = squaredWeight ? totalWeight * totalWeight / squaredWeight : 0;
-    const proportion = winRate / 100;
-    const margin = effectiveSamples ? 1.96 * Math.sqrt(proportion * (1 - proportion) / effectiveSamples) * 100 : 100;
-    return { ...move, samples: samples.length, effectiveSamples, winRate, margin, heuristic: moveHeuristic(move, game.hands[0], game.voids[1]) };
-  }).sort((a, b) => b.winRate - a.winRate || b.heuristic - a.heuristic);
-}
-
-function reasonForMove(game: Game, move: Move): string {
-  const nextPlayer = (game.current + 1) % 3;
-  const pressured = [move.newLeft, move.newRight].filter((value, index, values) => values.indexOf(value) === index && game.voids[nextPlayer].has(value));
-  if (pressured.length) return `It reopens ${pressured.join(' and ')}, a number ${names[nextPlayer]} has already passed on, so it may force another pass.`;
-  const remaining = game.hands[game.current].filter((tile) => tile.id !== move.tile.id);
-  const counts = [move.newLeft, move.newRight].map((value) => ({ value, count: remaining.filter((tile) => tile.a === value || tile.b === value).length }));
-  const controlled = counts.sort((a, b) => b.count - a.count)[0];
-  if (controlled.count >= 2) return `It leaves ${controlled.value} open while you still hold ${controlled.count} ways back into that number, which preserves control.`;
-  if (move.tile.a === move.tile.b) return `It safely unloads a double before it becomes stranded late in the round.`;
-  if (move.tile.a + move.tile.b >= 13) return `It removes ${move.tile.a + move.tile.b} pips from your hand, reducing the damage if the table blocks.`;
-  const directMatches = remaining.filter((tile) => tile.a === move.newLeft || tile.b === move.newLeft || tile.a === move.newRight || tile.b === move.newRight).length;
-  return `It removes ${move.tile.a + move.tile.b} pips, leaves ${move.newLeft} and ${move.newRight} open, and keeps ${directMatches} tile${directMatches === 1 ? '' : 's'} in your hand that match those ends.`;
-}
-
-function chooseBotMove(game: Game, moves: Move[]): Move {
-  return [...moves].sort((a, b) => moveHeuristic(b, game.hands[game.current], game.voids[(game.current + 1) % 3]) - moveHeuristic(a, game.hands[game.current], game.voids[(game.current + 1) % 3]))[0];
-}
-
 function Half({ value }: { value: number }) {
   return <span className={`tile-half value-${value}`} aria-label={`${value}`}>{Array.from({ length: 9 }, (_, index) => <i key={index} className={dotMap[value].includes(index) ? 'pip on' : 'pip'} />)}</span>;
 }
@@ -447,28 +250,208 @@ function makeSnakeRows(chain: PlacedTile[], rowSize = 8): SnakeRow[] {
   return rows;
 }
 
+function reviewMoveLabel(option: RoundReview['decisions'][number]['chosen']): string {
+  return `${option.tile.a}–${option.tile.b}${option.side ? ` on the ${option.side}` : ''}`;
+}
+
+function verdictLabel(verdict: RoundReview['decisions'][number]['verdict']): string {
+  if (verdict === 'best') return 'Best choice';
+  if (verdict === 'close') return 'Too close to call';
+  if (verdict === 'slight') return 'Small miss';
+  if (verdict === 'mistake') return 'Mistake';
+  return 'Big mistake';
+}
+
+function RoundReviewPanel({
+  review,
+  onContinue,
+  continueLabel,
+}: {
+  review: RoundReview;
+  onContinue: () => void;
+  continueLabel: string;
+}) {
+  const beliefAccuracy = review.beliefChecks.total
+    ? `${review.beliefChecks.correct}/${review.beliefChecks.total}`
+    : 'No reads yet';
+  return <div className="round-review-overlay">
+    <div className="review-header">
+      <div><span className="setup-kicker">Round {review.round} coaching report</span><h2>What the table was telling you</h2><p>Advice below uses only what was knowable when each move was played. Revealed hands are shown separately.</p></div>
+      <div className="review-stats">
+        <span><b>{review.decisions.length}</b><small>decisions</small></span>
+        <span><b>{review.closeCalls}</b><small>close calls</small></span>
+        <span><b>{beliefAccuracy}</b><small>reads matched</small></span>
+      </div>
+    </div>
+
+    <div className="review-highlights">
+      <article className={`review-highlight ${review.biggestMistake ? 'mistake' : 'clean'}`}>
+        <span>Largest lesson</span>
+        {review.biggestMistake
+          ? <><h3>{reviewMoveLabel(review.biggestMistake.best)} was stronger</h3><p>You played {reviewMoveLabel(review.biggestMistake.chosen)}. The paired estimate favored the alternative by {Math.round(review.biggestMistake.winRateGap)} percentage points.</p></>
+          : <><h3>No confident mistake found</h3><p>Your decisions were either the leading choice or too close for the simulations to judge honestly.</p></>}
+      </article>
+      <article className="review-highlight clean">
+        <span>Best decision</span>
+        {review.bestDecision
+          ? <><h3>{reviewMoveLabel(review.bestDecision.chosen)}</h3><p>{review.bestDecision.simulated}</p></>
+          : <><h3>No voluntary play to grade</h3><p>The round ended before you had a meaningful choice.</p></>}
+      </article>
+    </div>
+
+    <div className="review-decisions">
+      {review.decisions.map((decision, index) => <details className={`review-decision verdict-${decision.verdict}`} open={index === 0 || decision === review.biggestMistake} key={decision.record.id}>
+        <summary>
+          <span>Decision {index + 1} · {decision.record.phase}</span>
+          <b>{reviewMoveLabel(decision.chosen)}</b>
+          <em>{verdictLabel(decision.verdict)}</em>
+        </summary>
+        <div className="evidence-grid">
+          <p><strong>Known</strong>{decision.known}</p>
+          <p><strong>Inferred</strong>{decision.inferred}</p>
+          <p><strong>Simulated</strong>{decision.simulated}</p>
+          <p><strong>Uncertain</strong>{decision.uncertainty}</p>
+          <p className="revealed-evidence"><strong>Revealed afterward</strong>{decision.revealed}</p>
+        </div>
+      </details>)}
+      {!review.decisions.length && <div className="review-empty"><h3>No decisions to review</h3><p>You never had a voluntary legal choice during this round.</p></div>}
+    </div>
+
+    <div className="revealed-hands">
+      <span className="setup-kicker">Revealed only after the round</span>
+      {review.opponentStartingHands.map(({ player, tiles }) => <div key={player}><b>{names[player]}</b><p>{tiles.map((tile) => tile.id.replace('-', '–')).join(' · ')}</p></div>)}
+      <small>These tiles were never available to the live recommendation engine.</small>
+    </div>
+    <button className="deal-button" type="button" onClick={onContinue}>{continueLabel}</button>
+  </div>;
+}
+
+function informationSafeAnalysisGame(game: Game): Game {
+  return {
+    ...game,
+    hands: game.hands.map((hand, player) => player === 0
+      ? hand.map((tile) => ({ ...tile }))
+      : hand.map((_, index) => ({ id: `hidden-${player}-${index}`, a: -1, b: -1 }))),
+  };
+}
+
 export default function Home() {
   const [game, setGame] = useState<Game>(initialGame);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coach, setCoach] = useState<Coach>({ kind: 'intro' });
   const [difficulty, setDifficulty] = useState<Difficulty>('strong');
   const [beliefState, setBeliefState] = useState<BeliefState | null>(null);
-  const legalMoves = useMemo(() => game.phase === 'playing' && game.current === 0 ? legalMovesFor(game.hands[0], game.chain) : [], [game]);
+  const [styleProfiles, setStyleProfiles] = useState<OpponentStyleProfile[]>(createOpponentStyles);
+  const [decisionRecords, setDecisionRecords] = useState<DecisionRecord[]>([]);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const analyzerWorkers = useRef<Worker[]>([]);
+  const analysisSequence = useRef(0);
+  const analysisRequests = useRef(new Map<number, {
+    resolve: (ranked: SmartRatedMove[]) => void;
+    reject: (error: Error) => void;
+  }>());
+  const analysisCache = useRef(new Map<string, SmartRatedMove[]>());
+  const legalMoves = game.phase === 'playing' && game.current === 0 ? legalMovesFor(game.hands[0], game.chain) : [];
   const selectedMoves = legalMoves.filter((move) => move.tile.id === selectedId);
   const playableIds = new Set(legalMoves.map((move) => move.tile.id));
   const [leftEnd, rightEnd] = endsOf(game.chain);
   const snakeRows = useMemo(() => makeSnakeRows(game.chain), [game.chain]);
   const currentBeliefState = useMemo(() => {
     if (game.phase === 'pickStarter' || game.phase === 'starterDrawn' || !game.hands[0].length) return null;
-    return updateSmartBeliefState(beliefState, game, 0, beliefParticleCount);
-  }, [beliefState, game]);
+    return updateSmartBeliefState(beliefState, game, 0, beliefParticleCount, styleProfiles);
+  }, [beliefState, game, styleProfiles]);
+  const currentStyleProfiles = useMemo(() => updateOpponentStyles(
+    styleProfiles,
+    game,
+    currentBeliefState ?? undefined,
+  ), [currentBeliefState, game, styleProfiles]);
   const beliefs = useMemo(() => game.phase === 'playing'
-    ? estimateSmartBeliefs(game, 0, beliefParticleCount, currentBeliefState ?? undefined)
-    : [], [currentBeliefState, game]);
+    ? estimateSmartBeliefs(game, 0, beliefParticleCount, currentBeliefState ?? undefined, currentStyleProfiles)
+    : [], [currentBeliefState, currentStyleProfiles, game]);
+  const roundReview = (game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result
+    ? buildRoundReview(game, decisionRecords)
+    : null;
 
   useEffect(() => {
+    // The persistent particle pool advances only after public game events change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (beliefState !== currentBeliefState) setBeliefState(currentBeliefState);
   }, [beliefState, currentBeliefState]);
+
+  useEffect(() => {
+    // Style profiles are cumulative state, while currentStyleProfiles is the event-derived next snapshot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (styleProfiles !== currentStyleProfiles) setStyleProfiles(currentStyleProfiles);
+  }, [currentStyleProfiles, styleProfiles]);
+
+  useEffect(() => {
+    const receiveAnalysis = (event: MessageEvent<{ id: number; ranked?: SmartRatedMove[]; error?: string }>) => {
+      const pending = analysisRequests.current.get(event.data.id);
+      if (!pending) return;
+      analysisRequests.current.delete(event.data.id);
+      if (event.data.error || !event.data.ranked) pending.reject(new Error(event.data.error ?? 'No analysis returned.'));
+      else pending.resolve(event.data.ranked);
+    };
+    const analysisFailed = () => {
+      analysisRequests.current.forEach(({ reject }) => reject(new Error('The background analyzer stopped.')));
+      analysisRequests.current.clear();
+    };
+    const workers = Array.from({ length: analysisWorkerCount }, () => {
+      const worker = new AnalyzerWorker({ type: 'module' });
+      worker.onmessage = receiveAnalysis;
+      worker.onerror = analysisFailed;
+      return worker;
+    });
+    analyzerWorkers.current = workers;
+    return () => {
+      workers.forEach((worker) => worker.terminate());
+      analyzerWorkers.current = [];
+    };
+  }, []);
+
+  function analysisKey(): string {
+    const styleKey = currentStyleProfiles.map((style) => [
+      style.player,
+      style.observedChoices,
+      style.highPipTendency.toFixed(3),
+      style.doubleTendency.toFixed(3),
+      style.controlTendency.toFixed(3),
+      style.blockTendency.toFixed(3),
+    ].join(':')).join('/');
+    return `${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[0].map((tile) => tile.id).join(',')}|${styleKey}`;
+  }
+
+  async function analyzeCurrentDecision(): Promise<SmartRatedMove[]> {
+    const key = analysisKey();
+    const cached = analysisCache.current.get(key);
+    if (cached) return cached;
+    setIsAnalyzing(true);
+    try {
+      const workers = analyzerWorkers.current;
+      const safeGame = informationSafeAnalysisGame(game);
+      const ranked = workers.length
+        ? mergeMoveAnalyses(await Promise.all(workers.map((worker, shardIndex) => new Promise<SmartRatedMove[]>((resolve, reject) => {
+          const id = analysisSequence.current + 1;
+          analysisSequence.current = id;
+          analysisRequests.current.set(id, { resolve, reject });
+          worker.postMessage({
+            id,
+            game: safeGame,
+            sampleCount: beliefParticleCount,
+            beliefState: currentBeliefState ?? undefined,
+            styles: currentStyleProfiles,
+            options: { representativeLimit: 120, shardIndex, shardCount: workers.length },
+          });
+        }))))
+        : analyzeSmartMoves(safeGame, beliefParticleCount, currentBeliefState ?? undefined, currentStyleProfiles);
+      analysisCache.current.set(key, ranked);
+      if (analysisCache.current.size > 12) analysisCache.current.delete(analysisCache.current.keys().next().value!);
+      return ranked;
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
 
   useEffect(() => {
     if (game.phase !== 'playing' || game.current === 0 || coach.kind === 'feedback') return;
@@ -504,30 +487,74 @@ export default function Home() {
     const starter = game.starterDraw?.starter ?? 0;
     setGame(dealRound(game, starter));
     setSelectedId(null);
+    setDecisionRecords([]);
+    setReviewOpen(false);
     setCoach(starter === 0 ? { kind: 'turn', message: 'You won the draw. Open with any tile.' } : { kind: 'watching', message: `${names[starter]} is choosing an opening tile.` });
   }
 
-  function playUserMove(move: Move) {
-    const ranked = analyzeSmartMoves(game, beliefParticleCount, currentBeliefState ?? undefined);
-    const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
-    const best = ranked[0];
-    const gap = best.winRate - chosen.winRate;
-    const sameAsBest = best.tile.id === chosen.tile.id && best.side === chosen.side;
-    const comparison = sameAsBest ? ranked[1] : best;
-    const combinedMargin = comparison ? Math.sqrt(chosen.margin ** 2 + comparison.margin ** 2) : 0;
-    const tooClose = comparison ? Math.abs(chosen.winRate - comparison.winRate) <= Math.max(3, combinedMargin) : false;
-    const tone = sameAsBest || tooClose ? 'great' : gap <= 13 ? 'okay' : 'mistake';
-    const rating = tooClose ? 'Too close to call' : sameAsBest ? 'Best in simulations' : gap <= 13 ? 'Slight miss' : gap <= 24 ? 'Mistake' : 'Big mistake';
-    const title = tooClose ? `${move.tile.a}–${move.tile.b} is in the top group` : sameAsBest ? `Strong simulation result — ${move.tile.a}–${move.tile.b}` : `${best.tile.a}–${best.tile.b} simulated better`;
-    const body = tooClose
-      ? `The model cannot reliably separate this move from ${comparison!.tile.a}–${comparison!.tile.b}; the estimated difference is inside the uncertainty range. ${explainSmartMove(game, chosen, comparison)}`
-      : sameAsBest
-        ? explainSmartMove(game, chosen, comparison)
-        : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
-    const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} paired rollouts per move · ${chosen.treeSearch.visits} deep visits`;
-    setGame(applyMove(game, move));
+  function resetDay() {
+    setGame(initialGame());
+    setCoach({ kind: 'intro' });
     setSelectedId(null);
-    setCoach({ kind: 'feedback', rating, title, body, stat, tone });
+    setBeliefState(null);
+    setStyleProfiles(createOpponentStyles());
+    setDecisionRecords([]);
+    setReviewOpen(false);
+    analysisCache.current.clear();
+  }
+
+  async function playUserMove(move: Move) {
+    if (isAnalyzing) return;
+    try {
+      const ranked = await analyzeCurrentDecision();
+      const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
+      const best = ranked[0];
+      const gap = best.winRate - chosen.winRate;
+      const sameAsBest = best.tile.id === chosen.tile.id && best.side === chosen.side;
+      const comparison = sameAsBest ? ranked[1] : best;
+      const combinedMargin = comparison ? Math.sqrt(chosen.margin ** 2 + comparison.margin ** 2) : 0;
+      const tooClose = comparison ? Math.abs(chosen.winRate - comparison.winRate) <= Math.max(3, combinedMargin) : false;
+      const tone = sameAsBest || tooClose ? 'great' : gap <= 13 ? 'okay' : 'mistake';
+      const rating = tooClose ? 'Too close to call' : sameAsBest ? 'Best in simulations' : gap <= 13 ? 'Slight miss' : gap <= 24 ? 'Mistake' : 'Big mistake';
+      const title = tooClose ? `${move.tile.a}–${move.tile.b} is in the top group` : sameAsBest ? `Strong simulation result: ${move.tile.a}–${move.tile.b}` : `${best.tile.a}–${best.tile.b} simulated better`;
+      const body = tooClose
+        ? `The model cannot reliably separate this move from ${comparison!.tile.a}–${comparison!.tile.b}; the estimated difference is inside the uncertainty range. ${explainSmartMove(game, chosen, comparison)}`
+        : sameAsBest
+          ? explainSmartMove(game, chosen, comparison)
+          : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
+      const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} paired rollouts · ${chosen.treeSearch.visits} deep visits`;
+      const record = createDecisionRecord(
+        game,
+        ranked,
+        move,
+        beliefs,
+        currentBeliefState ?? undefined,
+        currentStyleProfiles,
+      );
+      if (record) setDecisionRecords((current) => [...current.filter(({ id }) => id !== record.id), record]);
+      setGame(applyMove(game, move));
+      setSelectedId(null);
+      setCoach({
+        kind: 'feedback',
+        rating,
+        title,
+        body,
+        stat,
+        tone,
+        evidence: {
+          known: record?.knownEvidence[0] ?? 'No opponent void had been proven yet.',
+          inferred: record?.inferredEvidence[0] ?? 'The hidden-hand model had no strong directional read yet.',
+          simulated: sameAsBest
+            ? `${move.tile.a}–${move.tile.b} led at ${Math.round(chosen.winRate)}% estimated wins.`
+            : `${best.tile.a}–${best.tile.b} led ${Math.round(best.winRate)}% to ${Math.round(chosen.winRate)}%.`,
+          uncertain: tooClose
+            ? 'The estimates overlap, so the coach is not calling this a mistake.'
+            : 'Simulation estimates describe repeated plausible deals, not a guaranteed result for this round.',
+        },
+      });
+    } catch {
+      setCoach({ kind: 'turn', message: 'The analysis did not finish. Your tile is still selected, so you can try again.' });
+    }
   }
 
   function passUser() {
@@ -536,22 +563,27 @@ export default function Home() {
     setCoach({ kind: 'feedback', rating: 'Forced pass', title: 'Nothing to fix here', body: `You had no tile matching ${leftEnd} or ${rightEnd}. The pass also tells both opponents that you are out of those numbers.`, stat: 'No decision lost', tone: 'great' });
   }
 
-  function showHint() {
-    const ranked = analyzeSmartMoves(game, beliefParticleCount, currentBeliefState ?? undefined);
-    if (!ranked.length) return;
-    const best = ranked[0];
-    const second = ranked[1];
-    const combinedMargin = second ? Math.sqrt(best.margin ** 2 + second.margin ** 2) : 0;
-    const tooClose = second ? best.winRate - second.winRate <= Math.max(3, combinedMargin) : false;
-    setSelectedId(best.tile.id);
-    setCoach({
-      kind: 'hint',
-      title: tooClose
-        ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
-        : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
-      body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference—not a certainty.' : ''}`,
-      confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} paired rollouts per move · ${best.treeSearch.visits} deep visits`,
-    });
+  async function showHint() {
+    if (isAnalyzing) return;
+    try {
+      const ranked = await analyzeCurrentDecision();
+      if (!ranked.length) return;
+      const best = ranked[0];
+      const second = ranked[1];
+      const combinedMargin = second ? Math.sqrt(best.margin ** 2 + second.margin ** 2) : 0;
+      const tooClose = second ? best.winRate - second.winRate <= Math.max(3, combinedMargin) : false;
+      setSelectedId(best.tile.id);
+      setCoach({
+        kind: 'hint',
+        title: tooClose
+          ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
+          : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
+        body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference, not a certainty.' : ''}`,
+        confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} paired rollouts · ${best.treeSearch.visits} deep visits`,
+      });
+    } catch {
+      setCoach({ kind: 'turn', message: 'The hint could not finish. You can still choose a legal tile.' });
+    }
   }
 
   function continueAfterFeedback() {
@@ -565,6 +597,9 @@ export default function Home() {
     const nextBase = { ...game, round: game.round + 1, starterDraw: game.starterDraw };
     setGame(dealRound(nextBase, starter));
     setSelectedId(null);
+    setBeliefState(null);
+    setDecisionRecords([]);
+    setReviewOpen(false);
     setCoach(starter === 0 ? { kind: 'turn', message: 'You won the last round, so you open.' } : { kind: 'watching', message: `${names[starter]} won the last round and opens.` });
   }
 
@@ -573,7 +608,7 @@ export default function Home() {
       <header className="topbar">
         <div className="brand-lockup"><span className="brand-mark"><i /><i /><i /></span><div><p>MESA</p><strong>QUINCE</strong></div></div>
         <div className="match-title"><span className="eyebrow">Practice table · Round {game.round}</span><h1>First to 15</h1></div>
-        <div className="header-actions"><button className="quiet-button" type="button" onClick={() => window.alert('Double-nine · 3 players · 10 tiles each · 25 sleep · mandatory play · blocked low-pip hand wins · ties score no point · first to 15 wins.')}>Rules</button><button className="new-game-button" type="button" onClick={() => { setGame(initialGame()); setCoach({ kind: 'intro' }); setSelectedId(null); }}>New game</button></div>
+        <div className="header-actions"><button className="quiet-button" type="button" onClick={() => window.alert('Double-nine · 3 players · 10 tiles each · 25 sleep · mandatory play · blocked low-pip hand wins · ties score no point · first to 15 wins.')}>Rules</button><button className="new-game-button" type="button" onClick={resetDay}>New game</button></div>
       </header>
 
       <section className="workspace">
@@ -629,17 +664,26 @@ export default function Home() {
               </div>
             </>}
 
-            {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && <div className="round-overlay">
+            {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && !reviewOpen && <div className="round-overlay">
               <span className="setup-kicker">{game.result.reason === 'blocked' ? 'Tranque · blocked table' : 'Last tile played'}</span>
               <h2>{game.result.winner === null ? 'Tied round — no point' : `${names[game.result.winner]} wins the round`}</h2>
               <div className="pip-totals">{game.result.pips.map((total, player) => <span key={names[player]}><small>{names[player]}</small><b>{total}</b><em>pips</em></span>)}</div>
-              {game.phase === 'matchEnd' ? <><p className="day-winner">{names[game.result.matchWinner ?? 0]} reached 15 and wins the day.</p><button className="deal-button" type="button" onClick={() => { setGame(initialGame()); setCoach({ kind: 'intro' }); }}>Play another day</button></> : <button className="deal-button" type="button" onClick={nextRound}>{game.result.winner === null ? 'Replay with same opener' : `${names[game.result.winner]} opens next round`}</button>}
+              {game.phase === 'matchEnd' && <p className="day-winner">{names[game.result.matchWinner ?? 0]} reached 15 and wins the day.</p>}
+              <div className="round-actions">
+                {roundReview && <button className="deal-button review-button" type="button" onClick={() => setReviewOpen(true)}>Review my round</button>}
+                <button className="secondary-round-button" type="button" onClick={game.phase === 'matchEnd' ? resetDay : nextRound}>{game.phase === 'matchEnd' ? 'Play another day' : game.result.winner === null ? 'Skip review and replay' : `Skip review · ${names[game.result.winner]} opens`}</button>
+              </div>
             </div>}
+            {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && game.result && reviewOpen && roundReview && <RoundReviewPanel
+              review={roundReview}
+              onContinue={game.phase === 'matchEnd' ? resetDay : nextRound}
+              continueLabel={game.phase === 'matchEnd' ? 'Play another day' : game.result.winner === null ? 'Replay with same opener' : `${names[game.result.winner]} opens next round`}
+            />}
           </div>
 
           <div className="hand-zone">
             <div className="hand-heading"><div><span className="eyebrow">Your hand</span><strong>{game.phase === 'playing' ? game.current === 0 ? legalMoves.length ? 'Choose a tile to play' : 'You have to pass' : 'Watch the table' : 'Tiles will appear after the deal'}</strong></div><span>{game.hands[0].length} tiles</span></div>
-            <div className={`hand-rack ${game.hands[0].length === 0 ? 'empty' : ''}`}>{game.hands[0].map((tile) => <Domino key={tile.id} tile={tile} selected={selectedId === tile.id} disabled={game.phase !== 'playing' || game.current !== 0 || !playableIds.has(tile.id) || coach.kind === 'feedback'} onClick={() => { setSelectedId(tile.id); if (coach.kind !== 'hint') setCoach({ kind: 'turn' }); }} />)}</div>
+            <div className={`hand-rack ${game.hands[0].length === 0 ? 'empty' : ''}`}>{game.hands[0].map((tile) => <Domino key={tile.id} tile={tile} selected={selectedId === tile.id} disabled={game.phase !== 'playing' || game.current !== 0 || !playableIds.has(tile.id) || coach.kind === 'feedback' || isAnalyzing} onClick={() => { setSelectedId(tile.id); if (coach.kind !== 'hint') setCoach({ kind: 'turn' }); }} />)}</div>
           </div>
         </section>
 
@@ -667,16 +711,26 @@ export default function Home() {
             <small>The same plausible deals persist across turns. Passes eliminate impossible deals; tile choices change their weights.</small>
           </div>}
 
+          {game.phase === 'playing' && currentStyleProfiles.some((style) => style.observedChoices > 0) && <div className="read-card style-card">
+            <span className="read-label">Playing-style tracker</span>
+            {currentStyleProfiles.map((style) => <div className="style-player" key={style.player}>
+              <div><b>{names[style.player]}</b><small>{style.observedChoices} useful choice{style.observedChoices === 1 ? '' : 's'} · {style.confidence} confidence</small></div>
+              <p>{describeOpponentStyle(style).join(' · ')}</p>
+            </div>)}
+            <small>These are tendencies, not certainties. They influence hidden-hand weights and simulated replies only after enough choices are observed.</small>
+          </div>}
+
           {coach.kind === 'intro' && <div className="coach-copy"><span className="eyebrow">Your exact house rules</span><h3>Three players. Ten tiles each. <b>Twenty-five sleep.</b></h3><p>The coach will judge decisions without peeking at the two hidden hands or the sleeping tiles.</p></div>}
           {coach.kind === 'watching' && <div className="coach-copy"><span className="eyebrow">Table update</span><h3>{coach.message}</h3><p>Watch the ends and notice which numbers cause a pass.</p></div>}
           {coach.kind === 'turn' && <div className="coach-copy"><span className="eyebrow">Your decision</span><h3>{selectedId ? `You selected the ${selectedId.replace('-', '–')}` : coach.message ?? 'What are the opponents telling you?'}</h3><p>{selectedId ? 'Choose which end to play it on, then I’ll evaluate the decision.' : 'Count the open numbers, remember the passes, and choose a tile.'}</p></div>}
           {coach.kind === 'hint' && <div className="coach-copy hint-copy"><span className="eyebrow">A useful hint</span><h3>{coach.title}</h3><p>{coach.body}</p><small>{coach.confidence}</small></div>}
-          {coach.kind === 'feedback' && <div className={`feedback-card ${coach.tone}`}><span className="feedback-rating">{coach.rating}</span><h3>{coach.title}</h3><p>{coach.body}</p><small>{coach.stat}</small></div>}
+          {coach.kind === 'feedback' && <div className={`feedback-card ${coach.tone}`}><span className="feedback-rating">{coach.rating}</span><h3>{coach.title}</h3><p>{coach.body}</p>{coach.evidence && <div className="live-evidence"><p><b>Known</b>{coach.evidence.known}</p><p><b>Inferred</b>{coach.evidence.inferred}</p><p><b>Simulated</b>{coach.evidence.simulated}</p><p><b>Uncertain</b>{coach.evidence.uncertain}</p></div>}<small>{coach.stat}</small></div>}
+          {(game.phase === 'roundEnd' || game.phase === 'matchEnd') && roundReview && <div className="coach-copy round-ready"><span className="eyebrow">Round report ready</span><h3>{roundReview.biggestMistake ? 'There is one decision worth studying.' : 'No confident mistake was found.'}</h3><p>The review separates what was known, inferred, simulated, and revealed afterward.</p><button className="hint-button" type="button" onClick={() => setReviewOpen(true)}>Open round review</button></div>}
 
           {game.phase === 'playing' && game.current === 0 && coach.kind !== 'feedback' && <div className="decision-actions">
-            {selectedMoves.map((move) => <button className="play-button" key={`${move.tile.id}-${move.side}`} type="button" onClick={() => playUserMove(move)}>{game.chain.length ? `Play on ${move.side} · ${move.side === 'left' ? leftEnd : rightEnd}` : `Open with ${move.tile.a}–${move.tile.b}`}<span>→</span></button>)}
+            {selectedMoves.map((move) => <button className="play-button" disabled={isAnalyzing} key={`${move.tile.id}-${move.side}`} type="button" onClick={() => playUserMove(move)}>{isAnalyzing ? 'Analyzing this decision…' : game.chain.length ? `Play on ${move.side} · ${move.side === 'left' ? leftEnd : rightEnd}` : `Open with ${move.tile.a}–${move.tile.b}`}<span>→</span></button>)}
             {!legalMoves.length && <button className="pass-button" type="button" onClick={passUser}>Pass — no legal tile <span>→</span></button>}
-            {legalMoves.length > 0 && <button className="hint-button" type="button" onClick={showHint}>Give me a hint</button>}
+            {legalMoves.length > 0 && <button className="hint-button" disabled={isAnalyzing} type="button" onClick={showHint}>{isAnalyzing ? 'Running paired simulations…' : 'Give me a hint'}</button>}
           </div>}
           {coach.kind === 'feedback' && game.phase === 'playing' && <button className="play-button continue-button" type="button" onClick={continueAfterFeedback}>Continue <span>→</span></button>}
 

@@ -4,18 +4,23 @@ import {
   analyzeMoves,
   applyMove,
   applyPass,
+  buildRoundReview,
   chooseCasualMove,
   chooseInformationSafeMove,
   createBeliefState,
+  createDecisionRecord,
+  createOpponentStyles,
   detectStrategicPhase,
   estimateBeliefs,
   fullSet,
   informationSafeMoveForecast,
   initialGame,
   legalMovesFor,
+  mergeMoveAnalyses,
   samplePossibleHands,
   seededRandom,
   updateBeliefState,
+  updateOpponentStyles,
   engineTesting,
 } from '../app/domino-engine.ts';
 
@@ -297,6 +302,7 @@ test('information-set tree search grows beyond three turns and focuses visits', 
   assert.ok(Number.isInteger(pairedBaseVisits));
   assert.ok(ranked.every((move) => move.samples === pairedBaseVisits));
   assert.ok(ranked.every((move) => move.treeSearch.pairedBaseWins.length === pairedBaseVisits));
+  assert.ok(ranked.every((move) => move.treeSearch.pairedBaseWeights.length === pairedBaseVisits));
   assert.ok(ranked.every((move) => move.treeSearch.pairedBaseWins.every((value) => value === 0 || value === 1)));
   assert.ok(Math.max(...visits) > 0);
   assert.ok(visits.filter((count) => count > 0).length <= 2);
@@ -330,4 +336,125 @@ test('the exact endgame solver finds a forced final-tile win', () => {
 test('tree utility matches the one-point round scoring rule', () => {
   assert.deepEqual(engineTesting.outcomeUtility({ winner: 1, reason: 'empty', nextPlayerPassed: false, pips: [3, 0, 7] }), [0, 1, 0]);
   assert.deepEqual(engineTesting.outcomeUtility({ winner: null, reason: 'blocked', nextPlayerPassed: false, pips: [5, 5, 12] }), [0, 0, 0]);
+});
+
+test('opponent style learning uses only public events and sampled hands', () => {
+  const ownHand = [tile(0, 0), tile(2, 2), tile(3, 3), tile(4, 4), tile(5, 5)];
+  const firstHidden = [tile(1, 4), tile(1, 6), tile(2, 9), tile(5, 8), tile(7, 7)];
+  const excluded = new Set([...ownHand, ...firstHidden, tile(1, 9)].map(({ id }) => id));
+  const available = fullSet().filter(({ id }) => !excluded.has(id));
+  const base = playingGame({
+    hands: [ownHand, firstHidden, available.slice(0, 5)],
+    chain: [placed('1-9', 1, 9, 2)],
+    current: 1,
+  });
+  const alternateHidden = [tile(1, 4), ...available.slice(10, 14)];
+  const alternate = { ...base, hands: [ownHand, alternateHidden, available.slice(20, 25)] };
+  const observed = legalMovesFor(firstHidden, base.chain).find((move) => move.tile.id === '1-4' && move.side === 'left');
+  const alternateObserved = legalMovesFor(alternateHidden, alternate.chain).find((move) => move.tile.id === '1-4' && move.side === 'left');
+  const afterBase = applyMove(base, observed);
+  const afterAlternate = applyMove(alternate, alternateObserved);
+  const baseBeliefs = createBeliefState(afterBase, 0, 90);
+  const alternateBeliefs = createBeliefState(afterAlternate, 0, 90);
+  const learned = updateOpponentStyles(createOpponentStyles(), afterBase, baseBeliefs);
+  const learnedAlternate = updateOpponentStyles(createOpponentStyles(), afterAlternate, alternateBeliefs);
+
+  assert.deepEqual(learned, learnedAlternate);
+  assert.equal(learned.find(({ player }) => player === 1).observedChoices, 1);
+  assert.equal(learned.find(({ player }) => player === 1).lastEventCount, 1);
+});
+
+test('decision records contain information-safe evidence and ignore real hidden identities', () => {
+  const ownHand = [tile(1, 5), tile(8, 9), tile(2, 2)];
+  const available = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));
+  const base = playingGame({ hands: [ownHand, available.slice(0, 4), available.slice(4, 8)], chain: [placed('1-9', 1, 9)] });
+  const alternate = { ...base, hands: [ownHand, available.slice(12, 16), available.slice(20, 24)] };
+  const firstBeliefs = createBeliefState(base, 0, 36);
+  const secondBeliefs = createBeliefState(alternate, 0, 36);
+  const firstRanked = analyzeMoves(base, 36, firstBeliefs, undefined, { representativeLimit: 24 });
+  const secondRanked = analyzeMoves(alternate, 36, secondBeliefs, undefined, { representativeLimit: 24 });
+  const firstReads = estimateBeliefs(base, 0, 36, firstBeliefs);
+  const secondReads = estimateBeliefs(alternate, 0, 36, secondBeliefs);
+  const firstRecord = createDecisionRecord(base, firstRanked, firstRanked.at(-1), firstReads, firstBeliefs);
+  const secondRecord = createDecisionRecord(alternate, secondRanked, secondRanked.at(-1), secondReads, secondBeliefs);
+
+  assert.deepEqual(firstRecord, secondRecord);
+  const serialized = JSON.stringify(firstRecord);
+  assert.ok(!serialized.includes(`\"id\":\"${available[0].id}\"`));
+  assert.equal(firstRecord.options[0].pairedWins.length, 24);
+});
+
+test('post-round review separates confident mistakes from revealed hindsight', () => {
+  const option = (key, a, b, wins) => ({
+    key,
+    tile: tile(a, b),
+    side: 'left',
+    newLeft: b,
+    newRight: 9,
+    winRate: wins[0] * 100,
+    margin: 0,
+    samples: wins.length,
+    nextPassRate: a === 1 ? 70 : 20,
+    blockedWinRate: 10,
+    emptyWinRate: 40,
+    averagePipsWhenLosing: 12,
+    retainedEndMatches: a === 1 ? 2 : 0,
+    returnRate: a === 1 ? 0.7 : 0.2,
+    pairedWins: wins,
+    pairedWeights: wins.map(() => 1),
+  });
+  const best = option('1-5:left', 1, 5, Array(12).fill(1));
+  const chosen = option('1-2:left', 1, 2, Array(12).fill(0));
+  const record = {
+    id: 'review-1',
+    round: 1,
+    eventCount: 0,
+    phase: 'middle',
+    hand: [tile(1, 5), tile(1, 2)],
+    handSizes: [2, 2, 2],
+    ends: [1, 9],
+    chosenKey: chosen.key,
+    bestKey: best.key,
+    options: [best, chosen],
+    knownEvidence: [],
+    inferredEvidence: ['Rosa looked less likely to hold 9.'],
+    beliefs: [{ player: 1, certainOut: [], softReads: [{ value: 9, direction: 'less', probability: 0.25, strength: 'moderate' }] }],
+    beliefConfidence: 'high',
+    recommendationReason: 'The stronger move preserved control.',
+  };
+  const finalGame = playingGame({
+    phase: 'roundEnd',
+    hands: [[tile(0, 0)], [tile(3, 9)], [tile(4, 4)]],
+    events: [],
+    result: { winner: 2, reason: 'empty', pips: [0, 12, 8], matchWinner: null },
+  });
+  const review = buildRoundReview(finalGame, [record]);
+
+  assert.equal(review.biggestMistake.verdict, 'big-mistake');
+  assert.equal(review.biggestMistake.interval[0], 100);
+  assert.match(review.biggestMistake.revealed, /did hold 9/);
+  assert.deepEqual(review.beliefChecks, { correct: 0, total: 1 });
+});
+
+test('multicore analysis shards merge to the same paired release evaluation', () => {
+  const ownHand = [tile(1, 5), tile(1, 7), tile(8, 9), tile(2, 2)];
+  const available = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));
+  const game = playingGame({ hands: [ownHand, available.slice(0, 5), available.slice(5, 10)], chain: [placed('1-9', 1, 9)] });
+  const beliefs = createBeliefState(game, 0, 30);
+  const single = analyzeMoves(game, 30, beliefs, undefined, { representativeLimit: 24 });
+  const merged = mergeMoveAnalyses(Array.from({ length: 3 }, (_, shardIndex) => analyzeMoves(
+    game,
+    30,
+    beliefs,
+    undefined,
+    { representativeLimit: 24, shardIndex, shardCount: 3 },
+  )));
+
+  assert.deepEqual(merged.map(moveKey), single.map(moveKey));
+  merged.forEach((move, index) => {
+    assert.ok(Math.abs(move.winRate - single[index].winRate) < 1e-9);
+    assert.equal(move.samples, 24);
+    assert.equal(move.treeSearch.pairedBaseWins.length, 24);
+    assert.equal(move.treeSearch.pairedBaseWeights.length, 24);
+  });
 });

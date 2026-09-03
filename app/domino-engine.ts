@@ -72,6 +72,7 @@ export type InformationSetSearchEvidence = {
   extraIterations: number;
   closeDecision: boolean;
   pairedBaseWins: number[];
+  pairedBaseWeights: number[];
   pairedTreeWins: number[];
 };
 export type RatedMove = Move & {
@@ -108,6 +109,87 @@ export type BeliefState = {
   choiceUpdates: number;
   resampleCount: number;
   diagnostics: BeliefDiagnostics;
+};
+export type StyleConfidence = 'low' | 'moderate' | 'high';
+export type OpponentStyleProfile = {
+  player: number;
+  observedChoices: number;
+  doubleOpportunities: number;
+  blockOpportunities: number;
+  highPipTendency: number;
+  doubleTendency: number;
+  controlTendency: number;
+  blockTendency: number;
+  strategicConsistency: number;
+  unpredictability: number;
+  confidence: StyleConfidence;
+  lastRound: number;
+  lastEventCount: number;
+};
+export type DecisionOption = {
+  key: string;
+  tile: Tile;
+  side: Side;
+  newLeft: number;
+  newRight: number;
+  winRate: number;
+  margin: number;
+  samples: number;
+  nextPassRate: number;
+  blockedWinRate: number;
+  emptyWinRate: number;
+  averagePipsWhenLosing: number;
+  retainedEndMatches: number;
+  returnRate: number;
+  pairedWins: number[];
+  pairedWeights: number[];
+};
+export type DecisionRecord = {
+  id: string;
+  round: number;
+  eventCount: number;
+  phase: StrategicPhase;
+  hand: Tile[];
+  handSizes: number[];
+  ends: [number | null, number | null];
+  chosenKey: string;
+  bestKey: string;
+  options: DecisionOption[];
+  knownEvidence: string[];
+  inferredEvidence: string[];
+  beliefs: PlayerBelief[];
+  beliefConfidence: BeliefConfidence;
+  recommendationReason: string;
+};
+export type DecisionVerdict = 'best' | 'close' | 'slight' | 'mistake' | 'big-mistake';
+export type DecisionReview = {
+  record: DecisionRecord;
+  chosen: DecisionOption;
+  best: DecisionOption;
+  verdict: DecisionVerdict;
+  winRateGap: number;
+  interval: [number, number];
+  confidence: BeliefConfidence;
+  known: string;
+  inferred: string;
+  simulated: string;
+  uncertainty: string;
+  revealed: string;
+  beliefChecks: { correct: number; total: number };
+};
+export type RoundReview = {
+  round: number;
+  decisions: DecisionReview[];
+  biggestMistake: DecisionReview | null;
+  bestDecision: DecisionReview | null;
+  closeCalls: number;
+  beliefChecks: { correct: number; total: number };
+  opponentStartingHands: { player: number; tiles: Tile[] }[];
+};
+export type AnalysisOptions = {
+  representativeLimit?: number;
+  shardIndex?: number;
+  shardCount?: number;
 };
 
 type WeightedSample = BeliefParticle;
@@ -269,6 +351,32 @@ export function seededRandom(seedText: string): () => number {
     value ^= value + Math.imul(value ^ value >>> 7, value | 61);
     return ((value ^ value >>> 14) >>> 0) / 4294967296;
   };
+}
+
+function blankOpponentStyle(player: number): OpponentStyleProfile {
+  return {
+    player,
+    observedChoices: 0,
+    doubleOpportunities: 0,
+    blockOpportunities: 0,
+    highPipTendency: 0.5,
+    doubleTendency: 0.5,
+    controlTendency: 0.5,
+    blockTendency: 0.5,
+    strategicConsistency: 0.5,
+    unpredictability: 0.5,
+    confidence: 'low',
+    lastRound: 0,
+    lastEventCount: 0,
+  };
+}
+
+export function createOpponentStyles(): OpponentStyleProfile[] {
+  return [1, 2].map(blankOpponentStyle);
+}
+
+function styleForPlayer(styles: OpponentStyleProfile[] | undefined, player: number): OpponentStyleProfile | undefined {
+  return styles?.find((style) => style.player === player && style.observedChoices > 0);
 }
 
 function uniqueEnds(move: Move): number[] {
@@ -587,7 +695,85 @@ function handsBeforeEvent(game: Game, sampledHands: Tile[][], eventIndex: number
   return reconstructed.map((hand) => [...hand.values()]);
 }
 
-function observedChoiceProbability(game: Game, eventIndex: number, hands: Tile[][]): number {
+type StyleMoveFeatures = {
+  highPips: number;
+  double: number;
+  control: number;
+  block: number;
+  strategic: number;
+};
+
+function rankFraction(value: number, values: number[]): number {
+  if (values.length <= 1) return 0.5;
+  const below = values.filter((candidate) => candidate < value).length;
+  const equal = values.filter((candidate) => candidate === value).length;
+  return (below + Math.max(0, equal - 1) / 2) / (values.length - 1);
+}
+
+function styleFeaturesForMoves(
+  legal: Move[],
+  hand: Tile[],
+  voids: Set<number>[],
+  player: number,
+  handSizes: number[],
+  context: StrategyContext,
+): Map<string, StyleMoveFeatures> {
+  const pipValues = legal.map((move) => move.tile.a + move.tile.b);
+  const controlValues = legal.map((move) => {
+    const remaining = hand.filter((tile) => tile.id !== move.tile.id);
+    return uniqueEnds(move).reduce(
+      (sum, value) => sum + remaining.filter((tile) => matchesValue(tile, value)).length,
+      0,
+    );
+  });
+  const next = (player + 1) % 3;
+  const blockValues = legal.map((move) => {
+    const ends = uniqueEnds(move);
+    const estimatedPass = 1 - answerProbability(context.unseenTiles, handSizes[next], voids[next], ends);
+    const certainPass = ends.every((value) => voids[next].has(value)) ? 1 : 0;
+    return estimatedPass + certainPass;
+  });
+  const strategicValues = legal.map((move) => moveHeuristic(move, hand, voids, player, handSizes, context));
+  return new Map(legal.map((move, index) => [moveKey(move), {
+    highPips: rankFraction(pipValues[index], pipValues),
+    double: move.tile.a === move.tile.b ? 1 : 0,
+    control: rankFraction(controlValues[index], controlValues),
+    block: rankFraction(blockValues[index], blockValues),
+    strategic: rankFraction(strategicValues[index], strategicValues),
+  }]));
+}
+
+function styleAdjustedScores(
+  legal: Move[],
+  hand: Tile[],
+  voids: Set<number>[],
+  player: number,
+  handSizes: number[],
+  context: StrategyContext,
+  style?: OpponentStyleProfile,
+): number[] {
+  const base = legal.map((move) => moveHeuristic(move, hand, voids, player, handSizes, context));
+  if (!style || style.observedChoices < 2) return base;
+  const confidence = Math.min(1, style.observedChoices / 10);
+  const features = styleFeaturesForMoves(legal, hand, voids, player, handSizes, context);
+  return legal.map((move, index) => {
+    const feature = features.get(moveKey(move))!;
+    const preference = (
+      (style.highPipTendency - 0.5) * (feature.highPips - 0.5) * 5
+      + (style.doubleTendency - 0.5) * (feature.double - 0.5) * 3
+      + (style.controlTendency - 0.5) * (feature.control - 0.5) * 5
+      + (style.blockTendency - 0.5) * (feature.block - 0.5) * 5
+    ) * confidence;
+    return base[index] + preference;
+  });
+}
+
+function observedChoiceProbability(
+  game: Game,
+  eventIndex: number,
+  hands: Tile[][],
+  styles?: OpponentStyleProfile[],
+): number {
   const event = game.events[eventIndex];
   if (event.kind !== 'play') return 1;
   const [left, right] = event.endsBefore;
@@ -618,25 +804,39 @@ function observedChoiceProbability(game: Game, eventIndex: number, hands: Tile[]
     player: event.player,
     playedTiles,
   });
-  const scores = legal.map((move) => moveHeuristic(move, hand, eventVoids, event.player, handSizes, context));
+  const style = styleForPlayer(styles, event.player);
+  const scores = styleAdjustedScores(legal, hand, eventVoids, event.player, handSizes, context, style);
   const maximum = Math.max(...scores);
-  const weights = scores.map((score) => Math.exp((score - maximum) / 2.25));
+  const temperature = style ? 2.8 - style.strategicConsistency * 1.1 : 2.25;
+  const weights = scores.map((score) => Math.exp((score - maximum) / temperature));
   const observedIndex = legal.indexOf(observed);
   const strategicProbability = weights[observedIndex] / weights.reduce((sum, weight) => sum + weight, 0);
-  return 0.4 / legal.length + 0.6 * strategicProbability;
+  const randomShare = style ? 0.18 + style.unpredictability * 0.35 : 0.4;
+  return randomShare / legal.length + (1 - randomShare) * strategicProbability;
 }
 
-function choiceLikelihood(game: Game, sampledHands: Tile[][], perspective: number): number {
+function choiceLikelihood(
+  game: Game,
+  sampledHands: Tile[][],
+  perspective: number,
+  styles?: OpponentStyleProfile[],
+): number {
   let logLikelihood = 0;
   game.events.forEach((event, eventIndex) => {
     if (event.kind !== 'play' || event.player === perspective || event.endsBefore[0] === null) return;
-    const probability = observedChoiceProbability(game, eventIndex, handsBeforeEvent(game, sampledHands, eventIndex));
+    const probability = observedChoiceProbability(game, eventIndex, handsBeforeEvent(game, sampledHands, eventIndex), styles);
     logLikelihood += Math.log(Math.max(probability, 0.008));
   });
   return Math.exp(Math.max(-10, logLikelihood * 0.38));
 }
 
-function buildParticles(game: Game, perspective: number, count: number, seed: string): WeightedSample[] {
+function buildParticles(
+  game: Game,
+  perspective: number,
+  count: number,
+  seed: string,
+  styles?: OpponentStyleProfile[],
+): WeightedSample[] {
   const random = seededRandom(seed);
   const samples: WeightedSample[] = [];
   let attempts = 0;
@@ -644,9 +844,139 @@ function buildParticles(game: Game, perspective: number, count: number, seed: st
   while (samples.length < count && attempts < maximumAttempts) {
     attempts += 1;
     const hands = samplePossibleHands(game, perspective, random);
-    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands, perspective) });
+    if (hands) samples.push({ hands, weight: choiceLikelihood(game, hands, perspective, styles) });
   }
   return samples;
+}
+
+type StyleObservation = {
+  highPips: number;
+  double: number | null;
+  control: number;
+  block: number | null;
+  strategic: number;
+};
+
+function styleObservationForEvent(game: Game, eventIndex: number, hands: Tile[][]): StyleObservation | null {
+  const event = game.events[eventIndex];
+  if (event.kind !== 'play' || event.endsBefore[0] === null) return null;
+  const hand = hands[event.player];
+  const legal = legalMovesFor(hand, chainFromEnds(event.endsBefore));
+  const observed = legal.find((move) => move.tile.id === event.tile.id && move.side === event.side)
+    ?? legal.find((move) => move.tile.id === event.tile.id);
+  if (!observed || legal.length <= 1) return null;
+  const eventsBefore = game.events.slice(0, eventIndex);
+  const eventVoids = voidsBeforeEvent(game, eventIndex);
+  let consecutivePasses = 0;
+  for (let index = eventsBefore.length - 1; index >= 0 && eventsBefore[index].kind === 'pass'; index -= 1) {
+    consecutivePasses += 1;
+  }
+  const playedTiles = eventsBefore.flatMap((past) => past.kind === 'play' ? [past.tile] : []);
+  const handSizes = hands.map((candidate) => candidate.length);
+  const context = strategyContextForState({
+    hand,
+    handSizes,
+    chainLength: playedTiles.length,
+    consecutivePasses,
+    left: event.endsBefore[0],
+    right: event.endsBefore[1],
+    voids: eventVoids,
+    player: event.player,
+    playedTiles,
+  });
+  const features = styleFeaturesForMoves(legal, hand, eventVoids, event.player, handSizes, context);
+  const chosen = features.get(moveKey(observed))!;
+  const blockValues = legal.map((move) => features.get(moveKey(move))!.block);
+  return {
+    highPips: chosen.highPips,
+    double: legal.some((move) => move.tile.a === move.tile.b) ? chosen.double : null,
+    control: chosen.control,
+    block: Math.max(...blockValues) > Math.min(...blockValues) ? chosen.block : null,
+    strategic: chosen.strategic,
+  };
+}
+
+function average(values: number[]): number {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0.5;
+}
+
+function extendAverage(current: number, currentCount: number, additions: number[]): number {
+  if (!additions.length) return current;
+  return (current * currentCount + additions.reduce((sum, value) => sum + value, 0))
+    / (currentCount + additions.length);
+}
+
+export function updateOpponentStyles(
+  previous: OpponentStyleProfile[] | null,
+  game: Game,
+  beliefState?: BeliefState,
+): OpponentStyleProfile[] {
+  const profiles = previous?.length ? previous : createOpponentStyles();
+  if (profiles.every((profile) => profile.lastRound === game.round && profile.lastEventCount === game.events.length)) {
+    return profiles;
+  }
+  const currentParticles = currentBeliefParticles(game, 0, beliefState);
+  const samples = currentParticles
+    ? representativeParticles(currentParticles, 48)
+    : buildParticles(game, 0, 48, beliefSeed(game, 0, 'style-learning'));
+
+  return profiles.map((profile) => {
+    const start = profile.lastRound === game.round ? profile.lastEventCount : 0;
+    const observations: StyleObservation[] = [];
+    for (let eventIndex = start; eventIndex < game.events.length; eventIndex += 1) {
+      const event = game.events[eventIndex];
+      if (event.kind !== 'play' || event.player !== profile.player || event.endsBefore[0] === null) continue;
+      const possible = samples
+        .map((sample) => styleObservationForEvent(game, eventIndex, handsBeforeEvent(game, sample.hands, eventIndex)))
+        .filter((value): value is StyleObservation => value !== null);
+      if (!possible.length) continue;
+      const doubles = possible.flatMap((value) => value.double === null ? [] : [value.double]);
+      const blocks = possible.flatMap((value) => value.block === null ? [] : [value.block]);
+      observations.push({
+        highPips: average(possible.map((value) => value.highPips)),
+        double: doubles.length ? average(doubles) : null,
+        control: average(possible.map((value) => value.control)),
+        block: blocks.length ? average(blocks) : null,
+        strategic: average(possible.map((value) => value.strategic)),
+      });
+    }
+
+    const doubleValues = observations.flatMap((value) => value.double === null ? [] : [value.double]);
+    const blockValues = observations.flatMap((value) => value.block === null ? [] : [value.block]);
+    const observedChoices = profile.observedChoices + observations.length;
+    const strategicConsistency = extendAverage(
+      profile.strategicConsistency,
+      profile.observedChoices,
+      observations.map((value) => value.strategic),
+    );
+    return {
+      ...profile,
+      observedChoices,
+      highPipTendency: extendAverage(profile.highPipTendency, profile.observedChoices, observations.map((value) => value.highPips)),
+      doubleTendency: extendAverage(profile.doubleTendency, profile.doubleOpportunities, doubleValues),
+      doubleOpportunities: profile.doubleOpportunities + doubleValues.length,
+      controlTendency: extendAverage(profile.controlTendency, profile.observedChoices, observations.map((value) => value.control)),
+      blockTendency: extendAverage(profile.blockTendency, profile.blockOpportunities, blockValues),
+      blockOpportunities: profile.blockOpportunities + blockValues.length,
+      strategicConsistency,
+      unpredictability: 1 - strategicConsistency,
+      confidence: observedChoices >= 10 ? 'high' : observedChoices >= 4 ? 'moderate' : 'low',
+      lastRound: game.round,
+      lastEventCount: game.events.length,
+    };
+  });
+}
+
+export function describeOpponentStyle(style: OpponentStyleProfile): string[] {
+  if (style.observedChoices < 2) return ['Not enough choices observed yet'];
+  const reads: Array<{ strength: number; text: string }> = [
+    { strength: Math.abs(style.highPipTendency - 0.5), text: style.highPipTendency >= 0.5 ? 'Often unloads high pips' : 'Often preserves high-pip tiles' },
+    { strength: Math.abs(style.doubleTendency - 0.5), text: style.doubleTendency >= 0.5 ? 'Plays doubles when available' : 'Often protects doubles' },
+    { strength: Math.abs(style.controlTendency - 0.5), text: style.controlTendency >= 0.5 ? 'Favors connected numbers' : 'Accepts weaker return paths' },
+    { strength: Math.abs(style.blockTendency - 0.5), text: style.blockTendency >= 0.5 ? 'Leans toward pressure and blocks' : 'Rarely forces blocking lines' },
+    { strength: Math.abs(style.strategicConsistency - 0.5), text: style.strategicConsistency >= 0.5 ? 'Makes consistent strategic choices' : 'Plays unpredictably' },
+  ];
+  return reads.sort((left, right) => right.strength - left.strength).slice(0, 2).map(({ text }) => text);
 }
 
 function handSignature(hand: Tile[]): string {
@@ -750,8 +1080,19 @@ function beliefSeed(game: Game, perspective: number, label: string): string {
   return `${label}|${perspective}|${game.round}|${game.events.length}|${handSignature(game.hands[perspective])}|${game.chain.map((tile) => tile.id).join(',')}`;
 }
 
-export function createBeliefState(game: Game, perspective = 0, targetCount = 900): BeliefState {
-  const particles = normalizeParticleWeights(buildParticles(game, perspective, targetCount, beliefSeed(game, perspective, 'persistent-beliefs')));
+export function createBeliefState(
+  game: Game,
+  perspective = 0,
+  targetCount = 900,
+  styles?: OpponentStyleProfile[],
+): BeliefState {
+  const particles = normalizeParticleWeights(buildParticles(
+    game,
+    perspective,
+    targetCount,
+    beliefSeed(game, perspective, 'persistent-beliefs'),
+    styles,
+  ));
   const hardEvidenceUpdates = game.events.filter((event) => event.player !== perspective).length;
   const choiceUpdates = game.events.filter((event) => event.kind === 'play' && event.player !== perspective && event.endsBefore[0] !== null).length;
   return {
@@ -773,6 +1114,7 @@ export function updateBeliefState(
   game: Game,
   perspective = 0,
   targetCount = 900,
+  styles?: OpponentStyleProfile[],
 ): BeliefState {
   const currentOwnHand = handSignature(game.hands[perspective]);
   if (!previous
@@ -781,7 +1123,7 @@ export function updateBeliefState(
     || previous.targetCount !== targetCount
     || previous.eventCount > game.events.length
     || (previous.eventCount === game.events.length && previous.ownHandSignature !== currentOwnHand)) {
-    return createBeliefState(game, perspective, targetCount);
+    return createBeliefState(game, perspective, targetCount, styles);
   }
   if (previous.eventCount === game.events.length) return previous;
 
@@ -818,7 +1160,7 @@ export function updateBeliefState(
       }
       const choiceProbability = event.player === perspective
         ? 1
-        : observedChoiceProbability(game, eventIndex, particle.hands);
+        : observedChoiceProbability(game, eventIndex, particle.hands, styles);
       if (choiceProbability <= 0) {
         eliminatedLastUpdate += 1;
         continue;
@@ -833,7 +1175,7 @@ export function updateBeliefState(
   }
 
   if (!particles.length) {
-    const rebuilt = createBeliefState(game, perspective, targetCount);
+    const rebuilt = createBeliefState(game, perspective, targetCount, styles);
     return {
       ...rebuilt,
       resampleCount: previous.resampleCount + 1,
@@ -851,7 +1193,13 @@ export function updateBeliefState(
   if (needsResampling) {
     const random = seededRandom(beliefSeed(game, perspective, `belief-resample-${previous.resampleCount + 1}`));
     const freshGoal = Math.max(1, Math.round(targetCount * 0.35));
-    const fresh = normalizeParticleWeights(buildParticles(game, perspective, freshGoal, beliefSeed(game, perspective, `belief-fresh-${previous.resampleCount + 1}`)));
+    const fresh = normalizeParticleWeights(buildParticles(
+      game,
+      perspective,
+      freshGoal,
+      beliefSeed(game, perspective, `belief-fresh-${previous.resampleCount + 1}`),
+      styles,
+    ));
     const retained = systematicResample(particles, Math.max(0, targetCount - fresh.length), random);
     particles = normalizeParticleWeights([...retained, ...fresh]);
     resampleCount += 1;
@@ -887,9 +1235,21 @@ function currentBeliefParticles(game: Game, perspective: number, beliefState?: B
   return beliefState.particles;
 }
 
-export function estimateBeliefs(game: Game, perspective = 0, sampleCount = 480, beliefState?: BeliefState): PlayerBelief[] {
+export function estimateBeliefs(
+  game: Game,
+  perspective = 0,
+  sampleCount = 480,
+  beliefState?: BeliefState,
+  styles?: OpponentStyleProfile[],
+): PlayerBelief[] {
   const samples = currentBeliefParticles(game, perspective, beliefState)
-    ?? buildParticles(game, perspective, sampleCount, `beliefs|${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`);
+    ?? buildParticles(
+      game,
+      perspective,
+      sampleCount,
+      `beliefs|${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => tile.id).join(',')}`,
+      styles,
+    );
   return [0, 1, 2].filter((player) => player !== perspective).map((player) => {
     const certainOut = [...game.voids[player]].sort((a, b) => a - b);
     const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
@@ -1222,6 +1582,7 @@ function selectRolloutMove({
   current,
   context,
   playedTiles,
+  style,
 }: {
   hand: Tile[];
   handSizes: number[];
@@ -1230,29 +1591,47 @@ function selectRolloutMove({
   current: number;
   context: StrategyContext;
   playedTiles: Tile[];
+  style?: OpponentStyleProfile;
 }): Move {
   if (legal.length === 1) return legal[0];
+  const adjustedScores = styleAdjustedScores(legal, hand, voids, current, handSizes, context, style);
   const candidates = legal.length <= 3
     ? legal
     : legal
-      .map((move) => ({ move, score: moveHeuristic(move, hand, voids, current, handSizes, context) }))
+      .map((move, index) => ({ move, score: adjustedScores[index] }))
       .sort((left, right) => right.score - left.score)
       .slice(0, 3)
       .map(({ move }) => move);
   return candidates
-    .map((move) => ({ move, forecast: forecastMoveFromPublicInformation({
-      move,
-      hand,
-      handSizes,
-      voids,
-      player: current,
-      context,
-      playedTiles,
-    }) }))
-    .sort((left, right) => right.forecast.score - left.forecast.score)[0].move;
+    .map((move) => {
+      const legalIndex = legal.findIndex((candidate) => moveKey(candidate) === moveKey(move));
+      return {
+        move,
+        forecast: forecastMoveFromPublicInformation({
+          move,
+          hand,
+          handSizes,
+          voids,
+          player: current,
+          context,
+          playedTiles,
+        }),
+        styleScore: adjustedScores[legalIndex],
+      };
+    })
+    .sort((left, right) => (
+      right.forecast.score + (style ? right.styleScore * 0.28 : 0)
+      - left.forecast.score - (style ? left.styleScore * 0.28 : 0)
+    ))[0].move;
 }
 
-function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], perspective: number): RolloutOutcome {
+function rolloutWinner(
+  game: Game,
+  firstMove: Move,
+  sampledHands: Tile[][],
+  perspective: number,
+  styles?: OpponentStyleProfile[],
+): RolloutOutcome {
   const hands = sampledHands.map((hand) => [...hand]);
   hands[perspective] = hands[perspective].filter((tile) => tile.id !== firstMove.tile.id);
   if (!hands[perspective].length) return { winner: perspective, reason: 'empty', nextPlayerPassed: false, pips: hands.map(pipTotal) };
@@ -1294,6 +1673,7 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
         current,
         context,
         playedTiles,
+        style: styleForPlayer(styles, current),
       });
       passes = 0;
       hands[current] = hands[current].filter((tile) => tile.id !== move.tile.id);
@@ -1367,6 +1747,7 @@ type BaselineOutcomeStats = {
   weightedLosingPips: number;
   losingWeight: number;
   pairedWins: number[];
+  pairedWeights: number[];
 };
 
 type InformationSetSearchResult = {
@@ -1413,6 +1794,7 @@ function newBaselineOutcomeStats(): BaselineOutcomeStats {
     weightedLosingPips: 0,
     losingWeight: 0,
     pairedWins: [],
+    pairedWeights: [],
   };
 }
 
@@ -1558,8 +1940,11 @@ function choosePlayoutMove(
   actorHand: Tile[],
   legal: Move[],
   cache: Map<string, string>,
+  styles?: OpponentStyleProfile[],
 ): Move {
-  const key = informationSetKey(view);
+  const style = styleForPlayer(styles, view.current);
+  const styleKey = style ? `${style.player}:${style.observedChoices}:${style.highPipTendency.toFixed(2)}:${style.doubleTendency.toFixed(2)}:${style.controlTendency.toFixed(2)}:${style.blockTendency.toFixed(2)}` : 'default';
+  const key = `${informationSetKey(view)}|${styleKey}`;
   const cachedMove = cache.get(key);
   if (cachedMove) {
     const match = legal.find((move) => moveKey(move) === cachedMove);
@@ -1574,17 +1959,22 @@ function choosePlayoutMove(
     current: view.current,
     context,
     playedTiles: view.playedTiles,
+    style,
   });
   cache.set(key, moveKey(selected));
   return selected;
 }
 
-function finishPlayout(state: SearchSimulationState, cache: Map<string, string>): RolloutOutcome {
+function finishPlayout(
+  state: SearchSimulationState,
+  cache: Map<string, string>,
+  styles?: OpponentStyleProfile[],
+): RolloutOutcome {
   for (let turn = 0; turn < 80; turn += 1) {
     const actorHand = state.hands[state.current];
     const legal = legalMovesForEnds(actorHand, state.left, state.right);
     const outcome = legal.length
-      ? applySimulationMove(state, choosePlayoutMove(publicSimulationView(state, state.current), actorHand, legal, cache))
+      ? applySimulationMove(state, choosePlayoutMove(publicSimulationView(state, state.current), actorHand, legal, cache, styles))
       : applySimulationPass(state);
     if (outcome) return outcome;
   }
@@ -1597,6 +1987,7 @@ function evaluateRootMove(
   particle: BeliefParticle,
   move: Move,
   rolloutCache: Map<string, string>,
+  styles?: OpponentStyleProfile[],
 ): RolloutOutcome {
   const state = simulationState(game, particle.hands);
   let outcome = applySimulationMove(state, move);
@@ -1605,7 +1996,7 @@ function evaluateRootMove(
     state.left,
     state.right,
   ).length === 0;
-  if (!outcome) outcome = finishPlayout(state, rolloutCache);
+  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles);
   return { ...outcome, nextPlayerPassed: Boolean(nextPlayerPassed) };
 }
 
@@ -1646,6 +2037,7 @@ function recordBaselineOutcome(
   stats.totalWeight += weight;
   stats.squaredWeight += weight * weight;
   stats.pairedWins[pairIndex] = won ? 1 : 0;
+  stats.pairedWeights[pairIndex] = weight;
   if (won) {
     stats.weightedWins += weight;
     if (outcome.reason === 'blocked') stats.weightedBlockedWins += weight;
@@ -1686,6 +2078,7 @@ function runInformationSetIteration({
   rolloutCache,
   forcedRootAction,
   treePairIndex,
+  styles,
 }: {
   game: Game;
   perspective: number;
@@ -1695,6 +2088,7 @@ function runInformationSetIteration({
   rolloutCache: Map<string, string>;
   forcedRootAction: string;
   treePairIndex?: number;
+  styles?: OpponentStyleProfile[];
 }): { deepestPly: number; treePlies: number; revisitedActions: number } {
   const state = simulationState(game, particle.hands);
   const path: Array<{ node: InformationSetNode; action: TreeActionStats }> = [];
@@ -1717,7 +2111,7 @@ function runInformationSetIteration({
 
     const view = publicSimulationView(state, actor);
     if (actor !== perspective) {
-      outcome = applySimulationMove(state, choosePlayoutMove(view, actorHand, legal, rolloutCache));
+      outcome = applySimulationMove(state, choosePlayoutMove(view, actorHand, legal, rolloutCache, styles));
       continue;
     }
     const key = informationSetKey(view);
@@ -1741,9 +2135,9 @@ function runInformationSetIteration({
     if (atRoot && !outcome) {
       nextPlayerPassed = legalMovesForEnds(state.hands[state.current], state.left, state.right).length === 0;
     }
-    if (selected.expanded && !outcome) outcome = finishPlayout(state, rolloutCache);
+    if (selected.expanded && !outcome) outcome = finishPlayout(state, rolloutCache, styles);
   }
-  if (!outcome) outcome = finishPlayout(state, rolloutCache);
+  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles);
 
   const utilities = outcomeUtility(outcome);
   path.forEach(({ node, action }) => {
@@ -1803,6 +2197,7 @@ function informationSetMonteCarloSearch(
   perspective: number,
   moves: Move[],
   particles: BeliefParticle[],
+  styles?: OpponentStyleProfile[],
 ): InformationSetSearchResult {
   const tree = new Map<string, InformationSetNode>();
   const rolloutCache = new Map<string, string>();
@@ -1835,7 +2230,7 @@ function informationSetMonteCarloSearch(
 
   const recordIteration = (particle: BeliefParticle, forcedRootAction: string, treePairIndex?: number) => {
     const result = runInformationSetIteration({
-      game, perspective, particle, tree, rootOutcomes, rolloutCache, forcedRootAction, treePairIndex,
+      game, perspective, particle, tree, rootOutcomes, rolloutCache, forcedRootAction, treePairIndex, styles,
     });
     deepestPly = Math.max(deepestPly, result.deepestPly);
     totalTreePlies += result.treePlies;
@@ -1846,7 +2241,7 @@ function informationSetMonteCarloSearch(
   particles.forEach((particle, particleIndex) => {
     for (let offset = 0; offset < orderedMoves.length; offset += 1) {
       const move = orderedMoves[(particleIndex + offset) % orderedMoves.length];
-      const outcome = evaluateRootMove(game, perspective, particle, move, rolloutCache);
+      const outcome = evaluateRootMove(game, perspective, particle, move, rolloutCache, styles);
       recordBaselineOutcome(
         baselineOutcomes.get(moveKey(move))!,
         outcome,
@@ -1901,14 +2296,24 @@ function informationSetMonteCarloSearch(
   };
 }
 
-function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: number, beliefState?: BeliefState): RatedMove[] {
+function analyzeMovesForPlayer(
+  game: Game,
+  perspective: number,
+  sampleCount: number,
+  beliefState?: BeliefState,
+  styles?: OpponentStyleProfile[],
+  options?: AnalysisOptions,
+): RatedMove[] {
   const moves = legalMovesFor(game.hands[perspective], game.chain);
   if (!moves.length) return [];
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
   const persistentParticles = currentBeliefParticles(game, perspective, beliefState);
-  const samples = persistentParticles
-    ? representativeParticles(persistentParticles, interactiveSearchSamples)
-    : buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
+  let samples = persistentParticles
+    ? representativeParticles(persistentParticles, options?.representativeLimit ?? interactiveSearchSamples)
+    : buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`, styles);
+  const shardCount = Math.max(1, Math.floor(options?.shardCount ?? 1));
+  const shardIndex = Math.max(0, Math.min(shardCount - 1, Math.floor(options?.shardIndex ?? 0)));
+  if (shardCount > 1) samples = samples.filter((_, index) => index % shardCount === shardIndex);
   const handSizes = game.hands.map((hand) => hand.length);
   const context = strategyContextForGame(game, perspective);
   const lookaheadByMove = new Map(moves.map((move) => [
@@ -1923,7 +2328,7 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
       playedTiles: game.chain,
     }),
   ]));
-  const search = informationSetMonteCarloSearch(game, perspective, moves, samples);
+  const search = informationSetMonteCarloSearch(game, perspective, moves, samples, styles);
 
   return moves.map((move) => {
     const treeOutcome = search.outcomes.get(moveKey(move))!;
@@ -1958,6 +2363,7 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
         extraIterations: search.extraIterations,
         closeDecision: search.closeDecision,
         pairedBaseWins: baseline.pairedWins,
+        pairedBaseWeights: baseline.pairedWeights,
         pairedTreeWins: treeOutcome.pairedTreeWins,
       },
       evidence: {
@@ -1971,8 +2377,87 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
   }).sort((a, b) => b.winRate - a.winRate || b.lookahead.score - a.lookahead.score || b.heuristic - a.heuristic);
 }
 
-export function analyzeMoves(game: Game, sampleCount = 900, beliefState?: BeliefState): RatedMove[] {
-  return analyzeMovesForPlayer(game, 0, sampleCount, beliefState);
+export function analyzeMoves(
+  game: Game,
+  sampleCount = 900,
+  beliefState?: BeliefState,
+  styles?: OpponentStyleProfile[],
+  options?: AnalysisOptions,
+): RatedMove[] {
+  return analyzeMovesForPlayer(game, 0, sampleCount, beliefState, styles, options);
+}
+
+export function mergeMoveAnalyses(shards: RatedMove[][]): RatedMove[] {
+  const available = shards.filter((shard) => shard.length > 0);
+  if (!available.length) return [];
+  const keys = available[0].map(moveKey);
+  return keys.map((key) => {
+    const parts = available.map((shard) => shard.find((move) => moveKey(move) === key)).filter((move): move is RatedMove => Boolean(move));
+    const first = parts[0];
+    const pairedBaseWins = parts.flatMap((move) => move.treeSearch.pairedBaseWins);
+    const pairedBaseWeights = parts.flatMap((move) => move.treeSearch.pairedBaseWeights);
+    const totalWeight = pairedBaseWeights.reduce((sum, weight) => sum + weight, 0);
+    const squaredWeight = pairedBaseWeights.reduce((sum, weight) => sum + weight * weight, 0);
+    const weightedWins = pairedBaseWins.reduce((sum, won, index) => sum + won * pairedBaseWeights[index], 0);
+    const winRate = totalWeight ? weightedWins / totalWeight * 100 : 0;
+    const effectiveSamples = squaredWeight ? totalWeight * totalWeight / squaredWeight : 0;
+    const proportion = winRate / 100;
+    const margin = effectiveSamples ? 1.96 * Math.sqrt(proportion * (1 - proportion) / effectiveSamples) * 100 : 100;
+    const weightedRate = (read: (move: RatedMove) => number) => totalWeight
+      ? parts.reduce((sum, move) => {
+        const weight = move.treeSearch.pairedBaseWeights.reduce((partSum, value) => partSum + value, 0);
+        return sum + read(move) * weight;
+      }, 0) / totalWeight
+      : 0;
+    const losingWeight = parts.reduce((sum, move) => {
+      const weight = move.treeSearch.pairedBaseWeights.reduce((partSum, value) => partSum + value, 0);
+      return sum + weight * (1 - move.winRate / 100);
+    }, 0);
+    const averagePipsWhenLosing = losingWeight
+      ? parts.reduce((sum, move) => {
+        const weight = move.treeSearch.pairedBaseWeights.reduce((partSum, value) => partSum + value, 0);
+        return sum + move.evidence.averagePipsWhenLosing * weight * (1 - move.winRate / 100);
+      }, 0) / losingWeight
+      : 0;
+    const totalTreeVisits = parts.reduce((sum, move) => sum + move.treeSearch.visits, 0);
+    const totalExtraIterations = parts.reduce((sum, move) => sum + move.treeSearch.extraIterations, 0);
+    return {
+      ...first,
+      samples: parts.reduce((sum, move) => sum + move.samples, 0),
+      effectiveSamples,
+      winRate,
+      margin,
+      treeSearch: {
+        visits: totalTreeVisits,
+        averageUtility: totalTreeVisits
+          ? parts.reduce((sum, move) => sum + move.treeSearch.averageUtility * move.treeSearch.visits, 0) / totalTreeVisits
+          : 0,
+        informationSets: parts.reduce((sum, move) => sum + move.treeSearch.informationSets, 0),
+        multiVisitInformationSets: parts.reduce((sum, move) => sum + move.treeSearch.multiVisitInformationSets, 0),
+        deepestPly: Math.max(...parts.map((move) => move.treeSearch.deepestPly)),
+        averageTreePlies: totalExtraIterations
+          ? parts.reduce((sum, move) => sum + move.treeSearch.averageTreePlies * move.treeSearch.extraIterations, 0) / totalExtraIterations
+          : 0,
+        revisitedActionRate: totalExtraIterations
+          ? parts.reduce((sum, move) => sum + move.treeSearch.revisitedActionRate * move.treeSearch.extraIterations, 0) / totalExtraIterations
+          : 0,
+        uniqueDeals: parts.reduce((sum, move) => sum + move.treeSearch.uniqueDeals, 0),
+        baseIterations: parts.reduce((sum, move) => sum + move.treeSearch.baseIterations, 0),
+        extraIterations: totalExtraIterations,
+        closeDecision: parts.some((move) => move.treeSearch.closeDecision),
+        pairedBaseWins,
+        pairedBaseWeights,
+        pairedTreeWins: parts.flatMap((move) => move.treeSearch.pairedTreeWins),
+      },
+      evidence: {
+        nextPassRate: weightedRate((move) => move.evidence.nextPassRate),
+        blockedWinRate: weightedRate((move) => move.evidence.blockedWinRate),
+        emptyWinRate: weightedRate((move) => move.evidence.emptyWinRate),
+        averagePipsWhenLosing,
+        retainedEndMatches: first.evidence.retainedEndMatches,
+      },
+    };
+  }).sort((left, right) => right.winRate - left.winRate || right.lookahead.score - left.lookahead.score || right.heuristic - left.heuristic);
 }
 
 export function chooseStrongMove(game: Game, moves: Move[], sampleCount = interactiveSearchSamples): Move {
@@ -2022,6 +2507,213 @@ export function reasonForMove(game: Game, move: RatedMove, comparison?: RatedMov
     return `It removes ${move.tile.a + move.tile.b} pips now; in simulations you lost with an average of ${move.evidence.averagePipsWhenLosing.toFixed(1)} pips still in hand.`;
   }
   return `It won about ${Math.round(move.winRate)}% of the choice-weighted simulations, with ${Math.round(move.evidence.emptyWinRate)}% ending by playing the final tile and ${Math.round(move.evidence.blockedWinRate)}% by winning a block.`;
+}
+
+function optionFromRatedMove(move: RatedMove): DecisionOption {
+  return {
+    key: moveKey(move),
+    tile: { ...move.tile },
+    side: move.side,
+    newLeft: move.newLeft,
+    newRight: move.newRight,
+    winRate: move.winRate,
+    margin: move.margin,
+    samples: move.samples,
+    nextPassRate: move.evidence.nextPassRate,
+    blockedWinRate: move.evidence.blockedWinRate,
+    emptyWinRate: move.evidence.emptyWinRate,
+    averagePipsWhenLosing: move.evidence.averagePipsWhenLosing,
+    retainedEndMatches: move.evidence.retainedEndMatches,
+    returnRate: move.lookahead.returnRate,
+    pairedWins: [...move.treeSearch.pairedBaseWins],
+    pairedWeights: [...move.treeSearch.pairedBaseWeights],
+  };
+}
+
+export function createDecisionRecord(
+  game: Game,
+  ranked: RatedMove[],
+  chosenMove: Move,
+  beliefs: PlayerBelief[],
+  beliefState?: BeliefState,
+  styles: OpponentStyleProfile[] = [],
+): DecisionRecord | null {
+  if (!ranked.length || game.current !== 0) return null;
+  const chosen = ranked.find((move) => moveKey(move) === moveKey(chosenMove))
+    ?? ranked.find((move) => move.tile.id === chosenMove.tile.id);
+  if (!chosen) return null;
+  const best = ranked[0];
+  const knownEvidence = beliefs.flatMap((belief) => belief.certainOut.length
+    ? [`${names[belief.player]} had certainly passed out of ${belief.certainOut.join(' and ')}.`]
+    : []);
+  const beliefReads = beliefs.flatMap((belief) => belief.softReads.map((read) => (
+    `${names[belief.player]} had about a ${Math.round(read.probability * 100)}% chance of holding ${read.value}, so ${read.value} looked ${read.direction === 'less' ? 'less' : 'more'} likely.`
+  )));
+  const styleReads = styles.flatMap((style) => style.observedChoices >= 4
+    ? [`After ${style.observedChoices} choices, ${names[style.player]} ${describeOpponentStyle(style)[0].toLowerCase()}.`]
+    : []);
+  return {
+    id: `${game.round}-${game.events.length}-${moveKey(chosen)}`,
+    round: game.round,
+    eventCount: game.events.length,
+    phase: detectStrategicPhase(game, 0),
+    hand: game.hands[0].map((tile) => ({ ...tile })),
+    handSizes: game.hands.map((hand) => hand.length),
+    ends: endsOf(game.chain),
+    chosenKey: moveKey(chosen),
+    bestKey: moveKey(best),
+    options: ranked.map(optionFromRatedMove),
+    knownEvidence,
+    inferredEvidence: [...beliefReads, ...styleReads],
+    beliefs: beliefs.map((belief) => ({
+      ...belief,
+      certainOut: [...belief.certainOut],
+      softReads: belief.softReads.map((read) => ({ ...read })),
+    })),
+    beliefConfidence: beliefState?.diagnostics.confidence ?? 'low',
+    recommendationReason: reasonForMove(game, best, chosen),
+  };
+}
+
+function pairedDifference(best: DecisionOption, chosen: DecisionOption): { gap: number; interval: [number, number] } {
+  if (best.key === chosen.key) return { gap: 0, interval: [0, 0] };
+  const count = Math.min(
+    best.pairedWins.length,
+    chosen.pairedWins.length,
+    best.pairedWeights.length,
+    chosen.pairedWeights.length,
+  );
+  if (!count) {
+    const gap = best.winRate - chosen.winRate;
+    const spread = Math.sqrt(best.margin ** 2 + chosen.margin ** 2);
+    return { gap, interval: [gap - spread, gap + spread] };
+  }
+  const differences = Array.from({ length: count }, (_, index) => best.pairedWins[index] - chosen.pairedWins[index]);
+  const weights = Array.from({ length: count }, (_, index) => (best.pairedWeights[index] + chosen.pairedWeights[index]) / 2);
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const squaredWeight = weights.reduce((sum, weight) => sum + weight * weight, 0);
+  const mean = totalWeight
+    ? differences.reduce((sum, difference, index) => sum + difference * weights[index], 0) / totalWeight
+    : 0;
+  const variance = totalWeight
+    ? differences.reduce((sum, difference, index) => sum + weights[index] * (difference - mean) ** 2, 0) / totalWeight
+    : 0;
+  const effectiveSamples = squaredWeight ? totalWeight * totalWeight / squaredWeight : count;
+  const spread = 1.96 * Math.sqrt(variance / Math.max(1, effectiveSamples));
+  return { gap: mean * 100, interval: [(mean - spread) * 100, (mean + spread) * 100] };
+}
+
+function actualHandsAtDecision(finalGame: Game, eventCount: number): Tile[][] {
+  return handsBeforeEvent(finalGame, finalGame.hands, Math.min(eventCount, finalGame.events.length));
+}
+
+function beliefAudit(record: DecisionRecord, actualHands: Tile[][]): {
+  correct: number;
+  total: number;
+  revealed: string;
+} {
+  let correct = 0;
+  let total = 0;
+  let revealed = 'There was no strong hidden-hand read to audit at this decision.';
+  for (const belief of record.beliefs) {
+    const hand = actualHands[belief.player];
+    for (const value of belief.certainOut) {
+      total += 1;
+      if (!hand.some((tile) => matchesValue(tile, value))) correct += 1;
+    }
+    for (const read of belief.softReads) {
+      const held = hand.some((tile) => matchesValue(tile, read.value));
+      const matched = read.direction === 'more' ? held : !held;
+      total += 1;
+      if (matched) correct += 1;
+      if (revealed.startsWith('There was no strong')) {
+        revealed = `After the reveal, ${names[belief.player]} ${held ? 'did' : 'did not'} hold ${read.value}. The earlier ${read.direction === 'more' ? 'more-likely' : 'less-likely'} read was ${matched ? 'consistent with the hand' : 'wrong on this deal'}.`;
+      }
+    }
+  }
+  return { correct, total, revealed };
+}
+
+function simulatedComparison(best: DecisionOption, chosen: DecisionOption): string {
+  if (best.key === chosen.key) {
+    return `${best.tile.a}-${best.tile.b} led the information-safe simulations at ${Math.round(best.winRate)}% estimated wins.`;
+  }
+  const passEdge = best.nextPassRate - chosen.nextPassRate;
+  const returnEdge = (best.returnRate - chosen.returnRate) * 100;
+  const reason = Math.abs(passEdge) >= 6
+    ? `It forced the next player to pass about ${Math.round(Math.abs(passEdge))} points ${passEdge > 0 ? 'more' : 'less'} often.`
+    : Math.abs(returnEdge) >= 8
+      ? `It preserved a return to the board about ${Math.round(Math.abs(returnEdge))} points ${returnEdge > 0 ? 'more' : 'less'} often.`
+      : `It left ${best.retainedEndMatches} connection${best.retainedEndMatches === 1 ? '' : 's'} to the new ends, compared with ${chosen.retainedEndMatches}.`;
+  return `${best.tile.a}-${best.tile.b} won ${Math.round(best.winRate)}% of simulations versus ${Math.round(chosen.winRate)}% for ${chosen.tile.a}-${chosen.tile.b}. ${reason}`;
+}
+
+function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview {
+  const chosen = record.options.find((option) => option.key === record.chosenKey)!;
+  const best = record.options.find((option) => option.key === record.bestKey)!;
+  const difference = pairedDifference(best, chosen);
+  const definitelyWorse = best.key !== chosen.key && difference.interval[0] > 0;
+  const verdict: DecisionVerdict = best.key === chosen.key
+    ? 'best'
+    : !definitelyWorse || difference.gap < 3
+      ? 'close'
+      : difference.gap < 10
+        ? 'slight'
+        : difference.gap < 20
+          ? 'mistake'
+          : 'big-mistake';
+  const confidence: BeliefConfidence = verdict === 'close' || record.beliefConfidence === 'low'
+    ? 'low'
+    : difference.interval[0] >= 5 && chosen.samples >= 60
+      ? 'high'
+      : 'moderate';
+  const audit = beliefAudit(record, actualHandsAtDecision(finalGame, record.eventCount));
+  const uncertainty = verdict === 'close'
+    ? `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points, so this is not a reliable mistake.`
+    : `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points. This supports the comparison, but it does not guarantee the alternate move would win this exact round.`;
+  return {
+    record,
+    chosen,
+    best,
+    verdict,
+    winRateGap: difference.gap,
+    interval: difference.interval,
+    confidence,
+    known: record.knownEvidence[0] ?? 'No opponent void had been proven yet.',
+    inferred: record.inferredEvidence[0] ?? 'The hidden-hand model had no strong directional read yet.',
+    simulated: simulatedComparison(best, chosen),
+    uncertainty,
+    revealed: audit.revealed,
+    beliefChecks: { correct: audit.correct, total: audit.total },
+  };
+}
+
+export function buildRoundReview(finalGame: Game, records: DecisionRecord[]): RoundReview {
+  const decisions = records
+    .filter((record) => record.round === finalGame.round)
+    .map((record) => reviewDecision(record, finalGame));
+  const mistakes = decisions
+    .filter((decision) => ['slight', 'mistake', 'big-mistake'].includes(decision.verdict) && decision.interval[0] > 0)
+    .sort((left, right) => right.winRateGap - left.winRateGap);
+  const bestChoices = decisions
+    .filter((decision) => decision.verdict === 'best')
+    .sort((left, right) => right.chosen.winRate - left.chosen.winRate);
+  const startingHands = actualHandsAtDecision(finalGame, 0);
+  return {
+    round: finalGame.round,
+    decisions,
+    biggestMistake: mistakes[0] ?? null,
+    bestDecision: bestChoices[0] ?? decisions.find((decision) => decision.verdict === 'close') ?? null,
+    closeCalls: decisions.filter((decision) => decision.verdict === 'close').length,
+    beliefChecks: decisions.reduce((total, decision) => ({
+      correct: total.correct + decision.beliefChecks.correct,
+      total: total.total + decision.beliefChecks.total,
+    }), { correct: 0, total: 0 }),
+    opponentStartingHands: [1, 2].map((player) => ({
+      player,
+      tiles: [...startingHands[player]].sort((left, right) => left.a - right.a || left.b - right.b),
+    })),
+  };
 }
 
 export const engineTesting = { legalMovesForEnds, analyzeMovesForPlayer, solveEndgame, rolloutWinner, outcomeUtility };
