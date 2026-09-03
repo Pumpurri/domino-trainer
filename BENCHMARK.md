@@ -191,3 +191,25 @@ Five endgame positions were small enough for the deal-specific exact solver. The
 No tested budget passed every provisional gate. In particular, 500 samples improved mean regret but did not make coaching labels reliable enough to treat as ground truth. The non-monotonic 1,000-sample result also shows why a single seeded run is misleading. Fixed live and deep budgets remain in place, and Deep Review remains a stronger second opinion with uncertainty labels. Adaptive stopping should not be enabled until it is tested against a larger corpus and uses repeated agreement or sequential confidence rules.
 
 On the balanced run, mean analysis time ranged from 1.4 seconds at 120 samples to 19.0 seconds at 2,000 under eight-core contention. The 2,000-sample opening p95 was 117.3 seconds. Future scheduling work should allocate across decisions according to legal-action count rather than treating every position as equal.
+
+## Experimental adaptive reliability gate
+
+The experimental analyzer accumulates independent paired batches at cumulative targets of 120, 250, 500, 1,000, and 2,000 representatives. Every move receives the same hidden deals within a batch, and earlier outcomes remain in the estimate. Early stopping requires the same leading move across at least two consecutive checks, a paired 95% interval whose lower bound exceeds a one-point practical threshold against every competitor, and a stable coaching verdict. At the hard cap, unresolved recommendations are explicitly marked uncertain.
+
+This capability is benchmark-only until it passes every release gate. Rosa, Tino, the live 120-sample coach, and the 500-sample Deep Review remain unchanged.
+
+Run the checkpointed 400-position study with half of this development machine's 12 logical cores:
+
+```sh
+caffeinate -i npm run benchmark:reliability:overnight
+```
+
+The command evaluates 100 positions in each phase, three repetitions of fixed 120, fixed 500, fixed 2,000, and adaptive analysis, plus an independent 5,000-sample reference. It writes atomic per-position checkpoints under `outputs/adaptive-reliability-400.checkpoint` and final reports under `benchmarks/`.
+
+Resume after an interruption:
+
+```sh
+caffeinate -i npm run benchmark:reliability:overnight -- --resume
+```
+
+The checkpoint manifest includes the seed, budgets, adaptive version and stages, reference budget, repetitions, confidence resamples, and worker count. A mismatched resume is rejected instead of mixing incompatible results. Optional controls for other runs are `--adaptive-stages=LIST`, `--checkpoint=PATH`, `--resume`, `--report=PATH`, and `--fixed-only` in addition to the earlier reliability controls.

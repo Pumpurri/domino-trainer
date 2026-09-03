@@ -80,12 +80,13 @@ test('reliability corpus is balanced across realistic strategic phases', () => {
   });
 });
 
-test('reliability evaluation compares independent budgets against one reference', () => {
+test('reliability evaluation compares independent budgets against one reference', async () => {
   const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-evaluation-test' });
-  const evaluated = evaluateReliabilityPosition(position, {
+  const evaluated = await evaluateReliabilityPosition(position, {
     budgets: [4, 8],
     repetitions: 2,
     referenceBudget: 12,
+    adaptiveStages: [4, 8],
     seed: 'reliability-evaluation-test',
   });
   assert.equal(evaluated.budgets[4].trials.length, 2);
@@ -101,12 +102,42 @@ test('reliability evaluation compares independent budgets against one reference'
   assert.equal(summary.overall[4].trials, 2);
   assert.equal(summary.overall[8].positions, 1);
   assert.equal(Object.values(summary.branchingCounts).reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(summary.adaptive.trials, 2);
+  assert.ok(summary.adaptive.samplesUsed.maximum <= 8);
+});
+
+test('fixed and adaptive reliability analysis ignore changed real hidden hands', async () => {
+  const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-hidden-safety' });
+  const reversedHidden = position.game.hands.slice(1).map((hand) => [...hand].reverse());
+  const alternate = {
+    ...position,
+    game: { ...position.game, hands: [position.game.hands[0], ...reversedHidden.reverse()] },
+  };
+  const options = {
+    budgets: [4],
+    repetitions: 1,
+    referenceBudget: 8,
+    adaptiveStages: [4, 8],
+    seed: 'reliability-hidden-safety',
+  };
+  const [first, second] = await Promise.all([
+    evaluateReliabilityPosition(position, options),
+    evaluateReliabilityPosition(alternate, options),
+  ]);
+  const decisionSignature = (result) => ({
+    reference: [result.reference.topKey, result.reference.verdict, result.reference.confidentMistake],
+    fixed: result.budgets[4].trials.map(({ topKey, verdict, confidentMistake }) => [topKey, verdict, confidentMistake]),
+    adaptive: result.adaptive.trials.map(({ topKey, verdict, recommendationConfidence, samplesUsed }) => (
+      [topKey, verdict, recommendationConfidence, samplesUsed]
+    )),
+  });
+  assert.deepEqual(decisionSignature(first), decisionSignature(second));
 });
 
 test('parallel reliability workers preserve deterministic decisions and labels', async () => {
   const positions = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-parallel-test' }).slice(0, 2);
-  const options = { budgets: [4], repetitions: 1, referenceBudget: 8, seed: 'reliability-parallel-test' };
-  const sequential = positions.map((position) => evaluateReliabilityPosition(position, options));
+  const options = { budgets: [4], repetitions: 1, referenceBudget: 8, adaptiveStages: [4, 8], seed: 'reliability-parallel-test' };
+  const sequential = await Promise.all(positions.map((position) => evaluateReliabilityPosition(position, options)));
   const parallel = await evaluateReliabilityParallel({ positions, options, workerCount: 2 });
   const decisions = (results) => results.map((result) => ({
     id: result.id,

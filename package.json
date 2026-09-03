@@ -15,6 +15,7 @@
     "benchmark:latency": "node --experimental-strip-types scripts/benchmark-analysis-latency.mjs",
     "benchmark:reliability": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs",
     "benchmark:reliability:quick": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --quick",
+    "benchmark:reliability:overnight": "node --experimental-strip-types scripts/benchmark-analyzer-reliability.mjs --positions-per-phase=100 --repetitions=3 --budgets=120,500,2000 --adaptive-stages=120,250,500,1000,2000 --reference-samples=5000 --confidence-resamples=2000 --workers=6 --checkpoint=outputs/adaptive-reliability-400.checkpoint --json=benchmarks/adaptive-reliability-400.json --report=benchmarks/adaptive-reliability-400.md",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {

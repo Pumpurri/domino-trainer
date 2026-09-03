@@ -3,7 +3,8 @@ import { evaluateReliabilityPosition } from './analyzer-reliability-core.mjs';
 
 const results = [];
 for (const position of workerData.positions) {
-  results.push(evaluateReliabilityPosition(position, workerData.options));
-  parentPort.postMessage({ type: 'progress', positionId: position.id });
+  const result = await evaluateReliabilityPosition(position, workerData.options);
+  results.push(result);
+  parentPort.postMessage({ type: 'result', result });
 }
 parentPort.postMessage({ type: 'complete', results });

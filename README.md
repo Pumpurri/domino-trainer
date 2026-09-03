@@ -22,6 +22,8 @@ The live coach is optimized for responsiveness. After a round, Deep Review can s
 
 The release selector is benchmark-gated. Deeper tree search cannot control a move until it beats the current policy in balanced matched-deal testing.
 
+An experimental adaptive analyzer is available to the reliability benchmark. It accumulates paired simulation batches at 120, 250, 500, 1,000, and 2,000 samples, requires recommendation and coaching-label stability across consecutive checks, and reports unresolved decisions cautiously at its hard cap. It is not used by the live coach unless the large reliability gate passes.
+
 ## Run locally
 
 ```sh
@@ -42,3 +44,15 @@ npm run benchmark:reliability:quick
 ```
 
 Run the full 2,160-round policy benchmark with `npm run benchmark`. Run the standard 16-position analyzer study with `npm run benchmark:reliability`. See [BENCHMARK.md](./BENCHMARK.md) for methodology, confidence intervals, current results, and search experiments.
+
+The checkpointed 400-position adaptive study uses six worker threads:
+
+```sh
+caffeinate -i npm run benchmark:reliability:overnight
+```
+
+Resume an interrupted run without recalculating completed positions:
+
+```sh
+caffeinate -i npm run benchmark:reliability:overnight -- --resume
+```
