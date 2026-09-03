@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   analyzeMoves,
   applyPass,
+  chooseCasualMove,
+  detectStrategicPhase,
   estimateBeliefs,
   fullSet,
   initialGame,
@@ -107,6 +109,44 @@ test('known voids are reflected in simulated immediate-pass evidence', () => {
   });
   const move = analyzeMoves(game, 80).find((candidate) => candidate.tile.id === '1-5');
   assert.ok(move.evidence.nextPassRate > 99);
+});
+
+test('strategy phases follow the state of the round', () => {
+  const deck = fullSet();
+  const opening = playingGame({
+    hands: [deck.slice(0, 10), deck.slice(10, 20), deck.slice(20, 30)],
+    chain: [],
+  });
+  const middle = playingGame({
+    hands: [deck.slice(0, 6), deck.slice(10, 16), deck.slice(20, 26)],
+  });
+  const late = playingGame({
+    hands: [deck.slice(0, 4), deck.slice(10, 15), deck.slice(20, 25)],
+  });
+  const block = playingGame({
+    hands: [deck.slice(0, 6), deck.slice(10, 16), deck.slice(20, 26)],
+    consecutivePasses: 2,
+  });
+
+  assert.equal(detectStrategicPhase(opening), 'opening');
+  assert.equal(detectStrategicPhase(middle), 'middle');
+  assert.equal(detectStrategicPhase(late), 'late');
+  assert.equal(detectStrategicPhase(block), 'block');
+});
+
+test('phase-aware strategy creates two proven unavailable ends', () => {
+  const userHand = [tile(3, 6), tile(2, 3), tile(8, 9), tile(1, 1)];
+  const excluded = new Set([...userHand.map(({ id }) => id), '3-8']);
+  const available = fullSet().filter(({ id }) => !excluded.has(id));
+  const game = playingGame({
+    hands: [userHand, available.slice(0, 5), available.slice(5, 10)],
+    chain: [placed('3-8', 3, 8, 2)],
+    voids: [new Set(), new Set([6, 8]), new Set()],
+  });
+  const chosen = chooseCasualMove(game, legalMovesFor(userHand, game.chain));
+
+  assert.equal(`${chosen.tile.id}:${chosen.side}`, '3-6:left');
+  assert.equal(detectStrategicPhase(game), 'late');
 });
 
 test('the exact endgame solver finds a forced final-tile win', () => {

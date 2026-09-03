@@ -38,6 +38,14 @@ export type Game = {
   events: PublicEvent[];
 };
 export type Difficulty = 'casual' | 'strong';
+export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
+export type StrategyContext = {
+  phase: StrategicPhase;
+  chainLength: number;
+  consecutivePasses: number;
+  unseenTiles: Tile[];
+  expectedPips: number[];
+};
 export type MoveEvidence = {
   nextPassRate: number;
   blockedWinRate: number;
@@ -67,12 +75,13 @@ type SolvedOutcome = { winner: number | null; reason: 'empty' | 'blocked'; utili
 
 export const names = ['You', 'Rosa', 'Tino'];
 
+const doubleNineSet: Tile[] = [];
+for (let a = 0; a <= 9; a += 1) {
+  for (let b = a; b <= 9; b += 1) doubleNineSet.push({ id: `${a}-${b}`, a, b });
+}
+
 export function fullSet(): Tile[] {
-  const tiles: Tile[] = [];
-  for (let a = 0; a <= 9; a += 1) {
-    for (let b = a; b <= 9; b += 1) tiles.push({ id: `${a}-${b}`, a, b });
-  }
-  return tiles;
+  return [...doubleNineSet];
 }
 
 export function shuffle<T>(items: T[], random: () => number = Math.random): T[] {
@@ -218,27 +227,265 @@ function uniqueEnds(move: Move): number[] {
   return move.newLeft === move.newRight ? [move.newLeft] : [move.newLeft, move.newRight];
 }
 
-export function moveHeuristic(move: Move, hand: Tile[], voids: Set<number>[], player: number, handSizes: number[] = [10, 10, 10]): number {
+function openValues(left: number | null, right: number | null): number[] {
+  if (left === null || right === null) return [];
+  return left === right ? [left] : [left, right];
+}
+
+function matchesValue(tile: Tile, value: number): boolean {
+  return tile.a === value || tile.b === value;
+}
+
+function connectionProfile(hand: Tile[]): { repeatedValues: number; components: number } {
+  if (!hand.length) return { repeatedValues: 0, components: 0 };
+  const counts = Array.from({ length: 10 }, (_, value) => hand.filter((tile) => matchesValue(tile, value)).length);
+  const repeatedValues = counts.reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+  const parents = hand.map((_, index) => index);
+  const root = (index: number): number => {
+    let current = index;
+    while (parents[current] !== current) {
+      parents[current] = parents[parents[current]];
+      current = parents[current];
+    }
+    return current;
+  };
+  const join = (left: number, right: number) => {
+    const leftRoot = root(left);
+    const rightRoot = root(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
+  for (let left = 0; left < hand.length; left += 1) {
+    for (let right = left + 1; right < hand.length; right += 1) {
+      if ([hand[left].a, hand[left].b].some((value) => matchesValue(hand[right], value))) join(left, right);
+    }
+  }
+  return { repeatedValues, components: new Set(hand.map((_, index) => root(index))).size };
+}
+
+function reachableExitTiles(hand: Tile[], ends: number[]): number {
+  const reachableValues = new Set(ends);
+  const reachedTiles = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const tile of hand) {
+      if (reachedTiles.has(tile.id) || (!reachableValues.has(tile.a) && !reachableValues.has(tile.b))) continue;
+      reachedTiles.add(tile.id);
+      reachableValues.add(tile.a);
+      reachableValues.add(tile.b);
+      changed = true;
+    }
+  }
+  return reachedTiles.size;
+}
+
+function answerProbability(unseenTiles: Tile[], handSize: number, knownVoids: Set<number>, ends: number[]): number {
+  if (!handSize || !ends.length) return 0;
+  const allowed = unseenTiles.filter((tile) => !knownVoids.has(tile.a) && !knownVoids.has(tile.b));
+  const matching = allowed.filter((tile) => ends.some((value) => matchesValue(tile, value))).length;
+  const sampleSize = Math.min(handSize, allowed.length);
+  if (!matching || !sampleSize) return 0;
+  if (allowed.length - matching < sampleSize) return 1;
+  let misses = 1;
+  for (let draw = 0; draw < sampleSize; draw += 1) {
+    misses *= (allowed.length - matching - draw) / (allowed.length - draw);
+  }
+  return 1 - misses;
+}
+
+function inferStrategicPhase(
+  hand: Tile[],
+  handSizes: number[],
+  chainLength: number,
+  consecutivePasses: number,
+  left: number | null,
+  right: number | null,
+  voids: Set<number>[],
+  player: number,
+): StrategicPhase {
+  const totalTiles = handSizes.reduce((sum, size) => sum + size, 0);
+  const ends = openValues(left, right);
+  const opponents = [0, 1, 2].filter((candidate) => candidate !== player);
+  const provenUnable = ends.length
+    ? opponents.filter((candidate) => ends.every((value) => voids[candidate].has(value))).length
+    : 0;
+  const currentEndSupply = ends.reduce((sum, value) => sum + hand.filter((tile) => matchesValue(tile, value)).length, 0);
+  const likelyBlock = ends.length > 0 && (
+    consecutivePasses >= 2
+    || (consecutivePasses >= 1 && totalTiles <= 20)
+    || (provenUnable >= 1 && totalTiles <= 16)
+    || (totalTiles <= 12 && currentEndSupply <= 1)
+  );
+  if (likelyBlock) return 'block';
+  if (handSizes[player] <= 3 || opponents.some((candidate) => handSizes[candidate] <= 2) || totalTiles <= 15) return 'late';
+  if (chainLength <= 6 && handSizes.every((size) => size >= 7)) return 'opening';
+  return 'middle';
+}
+
+function strategyContextForState({
+  hand,
+  handSizes,
+  chainLength,
+  consecutivePasses,
+  left,
+  right,
+  voids,
+  player,
+  playedTiles,
+}: {
+  hand: Tile[];
+  handSizes: number[];
+  chainLength: number;
+  consecutivePasses: number;
+  left: number | null;
+  right: number | null;
+  voids: Set<number>[];
+  player: number;
+  playedTiles: Tile[];
+}): StrategyContext {
+  const known = new Set([...hand, ...playedTiles].map((tile) => tile.id));
+  const unseenTiles = fullSet().filter((tile) => !known.has(tile.id));
+  const averageUnseenPips = unseenTiles.length
+    ? unseenTiles.reduce((sum, tile) => sum + tile.a + tile.b, 0) / unseenTiles.length
+    : 9;
+  return {
+    phase: inferStrategicPhase(hand, handSizes, chainLength, consecutivePasses, left, right, voids, player),
+    chainLength,
+    consecutivePasses,
+    unseenTiles,
+    expectedPips: handSizes.map((size, candidate) => candidate === player ? pipTotal(hand) : size * averageUnseenPips),
+  };
+}
+
+function strategyContextForGame(game: Game, player: number): StrategyContext {
+  const [left, right] = endsOf(game.chain);
+  return strategyContextForState({
+    hand: game.hands[player],
+    handSizes: game.hands.map((hand) => hand.length),
+    chainLength: game.chain.length,
+    consecutivePasses: game.consecutivePasses,
+    left,
+    right,
+    voids: game.voids,
+    player,
+    playedTiles: game.chain,
+  });
+}
+
+export function detectStrategicPhase(game: Game, player = game.current): StrategicPhase {
+  return strategyContextForGame(game, player).phase;
+}
+
+function fallbackStrategyContext(hand: Tile[], handSizes: number[], voids: Set<number>[], player: number, move: Move): StrategyContext {
+  return strategyContextForState({
+    hand,
+    handSizes,
+    chainLength: Math.max(0, 30 - handSizes.reduce((sum, size) => sum + size, 0)),
+    consecutivePasses: 0,
+    left: move.newLeft,
+    right: move.newRight,
+    voids,
+    player,
+    playedTiles: [],
+  });
+}
+
+export function moveHeuristic(
+  move: Move,
+  hand: Tile[],
+  voids: Set<number>[],
+  player: number,
+  handSizes: number[] = [10, 10, 10],
+  suppliedContext?: StrategyContext,
+): number {
   const remaining = hand.filter((tile) => tile.id !== move.tile.id);
   if (!remaining.length) return 1000;
+  const context = suppliedContext ?? fallbackStrategyContext(hand, handSizes, voids, player, move);
   const ends = uniqueEnds(move);
   const next = (player + 1) % 3;
   const other = (player + 2) % 3;
   const control = ends.reduce((sum, value) => sum + remaining.filter((tile) => tile.a === value || tile.b === value).length, 0);
-  const pressure = ends.reduce((sum, value) => sum + (voids[next].has(value) ? (handSizes[next] <= 2 ? 8 : 5.5) : 0), 0);
-  const futurePressure = ends.reduce((sum, value) => sum + (voids[other].has(value) ? 1.25 : 0), 0);
-  const pipRelief = (move.tile.a + move.tile.b) * 0.2;
-  const doubleRelief = move.tile.a === move.tile.b ? (remaining.length <= 4 ? 2 : 1.15) : 0;
-  const mobility = new Set(remaining.flatMap((tile) => [tile.a, tile.b])).size * 0.07;
-  const stranded = remaining.filter((tile) => !ends.some((value) => tile.a === value || tile.b === value)).length;
-  const reconnect = control ? 0 : -1.8;
-  const finishPressure = handSizes[player] <= 3 ? pipRelief * 0.35 : 0;
-  return control * 1.2 + pressure + futurePressure + pipRelief + doubleRelief + mobility + reconnect + finishPressure - stranded * 0.025;
+  const nextAnswer = answerProbability(context.unseenTiles, handSizes[next], voids[next], ends);
+  const otherAnswer = answerProbability(context.unseenTiles, handSizes[other], voids[other], ends);
+  const nextPassChance = 1 - nextAnswer;
+  const otherPassChance = 1 - otherAnswer;
+  const certainNextPass = ends.every((value) => voids[next].has(value));
+  const certainOtherPass = ends.every((value) => voids[other].has(value));
+  const pipRelief = move.tile.a + move.tile.b;
+  const remainingPips = pipTotal(remaining);
+  const doubleRelief = move.tile.a === move.tile.b ? 1 : 0;
+  const mobility = new Set(remaining.flatMap((tile) => [tile.a, tile.b])).size;
+  const connection = connectionProfile(remaining);
+  const disconnectedPenalty = Math.max(0, connection.components - 1);
+  const reconnectPenalty = control ? 0 : 1;
+  const exitRun = context.phase === 'late' || context.phase === 'block'
+    ? reachableExitTiles(remaining, ends)
+    : 0;
+  const expectedOpponentLow = Math.min(context.expectedPips[next], context.expectedPips[other]);
+  const pipLead = expectedOpponentLow - remainingPips;
+  const closurePressure = nextPassChance + otherPassChance * 0.65 + (control ? -0.1 : 0.25);
+
+  if (context.phase === 'opening') {
+    return control * 1.45
+      + connection.repeatedValues * 0.42
+      - disconnectedPenalty * 0.75
+      + mobility * 0.08
+      + nextPassChance * 1.1
+      + otherPassChance * 0.25
+      + (certainNextPass ? 1.2 : 0)
+      + pipRelief * 0.1
+      + doubleRelief * (pipRelief >= 12 ? 0.9 : 0.35)
+      - reconnectPenalty * 2.1;
+  }
+
+  if (context.phase === 'late') {
+    const immediateThreatWeight = handSizes[next] <= 1 ? 13 : handSizes[next] <= 2 ? 8 : 4.5;
+    const laterThreatWeight = handSizes[other] <= 1 ? 5 : handSizes[other] <= 2 ? 3 : 1;
+    return control * 1.35
+      + nextPassChance * immediateThreatWeight
+      + otherPassChance * laterThreatWeight
+      + (certainNextPass ? (handSizes[next] <= 2 ? 7 : 5) : 0)
+      + (certainOtherPass ? 1.5 : 0)
+      + pipRelief * 0.34
+      + doubleRelief * 2.1
+      + exitRun * 1.15
+      + connection.repeatedValues * 0.18
+      - disconnectedPenalty * 0.55
+      - reconnectPenalty * 2.6;
+  }
+
+  if (context.phase === 'block') {
+    const blockEdge = Math.max(-18, Math.min(18, pipLead));
+    return control * 0.85
+      + nextPassChance * 4.5
+      + otherPassChance * 2.8
+      + (certainNextPass ? 4 : 0)
+      + (certainOtherPass ? 2 : 0)
+      + pipRelief * 0.4
+      + doubleRelief * 1.6
+      + exitRun * 0.65
+      + closurePressure * blockEdge * 0.22
+      - remainingPips * 0.025
+      - disconnectedPenalty * 0.3
+      - reconnectPenalty * 1.25;
+  }
+
+  return control * 1.25
+    + nextPassChance * (handSizes[next] <= 2 ? 8 : 5.2)
+    + otherPassChance * 1.35
+    + (certainNextPass ? 3.5 : 0)
+    + pipRelief * 0.21
+    + doubleRelief * (remaining.length <= 4 ? 2.1 : 1.15)
+    + connection.repeatedValues * 0.18
+    + mobility * 0.05
+    - disconnectedPenalty * 0.35
+    - reconnectPenalty * 1.9;
 }
 
 export function chooseCasualMove(game: Game, moves: Move[]): Move {
   const handSizes = game.hands.map((hand) => hand.length);
-  return [...moves].sort((a, b) => moveHeuristic(b, game.hands[game.current], game.voids, game.current, handSizes) - moveHeuristic(a, game.hands[game.current], game.voids, game.current, handSizes))[0];
+  const context = strategyContextForGame(game, game.current);
+  return [...moves].sort((a, b) => moveHeuristic(b, game.hands[game.current], game.voids, game.current, handSizes, context) - moveHeuristic(a, game.hands[game.current], game.voids, game.current, handSizes, context))[0];
 }
 
 function handRespectsVoids(hand: Tile[], voids: Set<number>): boolean {
@@ -290,10 +537,37 @@ function choiceLikelihood(game: Game, sampledHands: Tile[][], perspective: numbe
       ?? legal.find((move) => move.tile.id === event.tile.id);
     if (!observed) return;
 
+    const eventsBefore = game.events.slice(0, eventIndex);
     const eventVoids = [new Set<number>(), new Set<number>(), new Set<number>()];
-    eventVoids[(event.player + 1) % 3] = new Set(event.nextVoids);
-    const handSizes = game.hands.map((currentHand, player) => player === event.player ? hand.length : currentHand.length);
-    const scores = legal.map((move) => moveHeuristic(move, hand, eventVoids, event.player, handSizes));
+    eventsBefore.forEach((past) => {
+      if (past.kind !== 'pass') return;
+      const [left, right] = past.endsBefore;
+      if (left !== null) eventVoids[past.player].add(left);
+      if (right !== null) eventVoids[past.player].add(right);
+    });
+    eventVoids[(event.player + 1) % 3] = new Set([...eventVoids[(event.player + 1) % 3], ...event.nextVoids]);
+    const handSizes = game.hands.map((currentHand, player) => currentHand.length + game.events
+      .slice(eventIndex)
+      .filter((future) => future.kind === 'play' && future.player === player).length);
+    handSizes[event.player] = hand.length;
+    let consecutivePasses = 0;
+    for (let pastIndex = eventsBefore.length - 1; pastIndex >= 0; pastIndex -= 1) {
+      if (eventsBefore[pastIndex].kind !== 'pass') break;
+      consecutivePasses += 1;
+    }
+    const playedTiles = eventsBefore.flatMap((past) => past.kind === 'play' ? [past.tile] : []);
+    const context = strategyContextForState({
+      hand,
+      handSizes,
+      chainLength: playedTiles.length,
+      consecutivePasses,
+      left: event.endsBefore[0],
+      right: event.endsBefore[1],
+      voids: eventVoids,
+      player: event.player,
+      playedTiles,
+    });
+    const scores = legal.map((move) => moveHeuristic(move, hand, eventVoids, event.player, handSizes, context));
     const maximum = Math.max(...scores);
     const weights = scores.map((score) => Math.exp((score - maximum) / 2.25));
     const observedIndex = legal.indexOf(observed);
@@ -389,7 +663,6 @@ function solveEndgame(hands: Tile[][], left: number, right: number, current: num
     return result;
   }
 
-  const handSizes = hands.map((hand) => hand.length);
   let best: SolvedOutcome | null = null;
   let bestTieBreak = -Infinity;
   for (const move of legal) {
@@ -397,7 +670,12 @@ function solveEndgame(hands: Tile[][], left: number, right: number, current: num
     const result = nextHands[current].length === 0
       ? { winner: current, reason: 'empty' as const, utility: terminalUtility(current) }
       : solveEndgame(nextHands, move.newLeft, move.newRight, (current + 1) % 3, 0, memo);
-    const tieBreak = moveHeuristic(move, hands[current], [new Set(), new Set(), new Set()], current, handSizes);
+    const remainingPips = pipTotal(nextHands[current]);
+    const retainedConnections = uniqueEnds(move).reduce(
+      (sum, value) => sum + nextHands[current].filter((tile) => matchesValue(tile, value)).length,
+      0,
+    );
+    const tieBreak = (move.tile.a + move.tile.b) * 0.3 + retainedConnections - remainingPips * 0.01;
     if (!best || result.utility[current] > best.utility[current] || (result.utility[current] === best.utility[current] && tieBreak > bestTieBreak)) {
       best = result;
       bestTieBreak = tieBreak;
@@ -407,10 +685,10 @@ function solveEndgame(hands: Tile[][], left: number, right: number, current: num
   return best!;
 }
 
-function selectRolloutMove(hands: Tile[][], legal: Move[], voids: Set<number>[], current: number): Move {
+function selectRolloutMove(hands: Tile[][], legal: Move[], voids: Set<number>[], current: number, context: StrategyContext): Move {
   const handSizes = hands.map((hand) => hand.length);
   return legal
-    .map((move) => ({ move, score: moveHeuristic(move, hands[current], voids, current, handSizes) }))
+    .map((move) => ({ move, score: moveHeuristic(move, hands[current], voids, current, handSizes, context) }))
     .sort((a, b) => b.score - a.score)[0].move;
 }
 
@@ -425,6 +703,8 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
   let firstTurn = true;
   let nextPlayerPassed = legalMovesForEnds(hands[current], left, right).length === 0;
   const voids = game.voids.map((values) => new Set(values));
+  const playedTiles: Tile[] = [...game.chain, firstMove.tile];
+  let chainLength = game.chain.length + 1;
 
   for (let turn = 0; turn < 80; turn += 1) {
     const totalTiles = hands.reduce((sum, hand) => sum + hand.length, 0);
@@ -441,9 +721,22 @@ function rolloutWinner(game: Game, firstMove: Move, sampledHands: Tile[][], pers
       passes += 1;
       if (passes === 3) return { winner: blockedWinner(hands), reason: 'blocked', nextPlayerPassed, pips: hands.map(pipTotal) };
     } else {
+      const context = strategyContextForState({
+        hand: hands[current],
+        handSizes: hands.map((hand) => hand.length),
+        chainLength,
+        consecutivePasses: passes,
+        left,
+        right,
+        voids,
+        player: current,
+        playedTiles,
+      });
+      const move = selectRolloutMove(hands, legal, voids, current, context);
       passes = 0;
-      const move = selectRolloutMove(hands, legal, voids, current);
       hands[current] = hands[current].filter((tile) => tile.id !== move.tile.id);
+      playedTiles.push(move.tile);
+      chainLength += 1;
       left = move.newLeft;
       right = move.newRight;
       if (!hands[current].length) return { winner: current, reason: 'empty', nextPlayerPassed, pips: hands.map(pipTotal) };
@@ -460,6 +753,7 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
   const samples = buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`);
   const handSizes = game.hands.map((hand) => hand.length);
+  const context = strategyContextForGame(game, perspective);
 
   return moves.map((move) => {
     let weightedWins = 0;
@@ -497,7 +791,7 @@ function analyzeMovesForPlayer(game: Game, perspective: number, sampleCount: num
       effectiveSamples,
       winRate,
       margin,
-      heuristic: moveHeuristic(move, game.hands[perspective], game.voids, perspective, handSizes),
+      heuristic: moveHeuristic(move, game.hands[perspective], game.voids, perspective, handSizes, context),
       evidence: {
         nextPassRate: totalWeight ? weightedNextPasses / totalWeight * 100 : 0,
         blockedWinRate: totalWeight ? weightedBlockedWins / totalWeight * 100 : 0,
@@ -531,9 +825,16 @@ export function chooseBotMove(game: Game, moves: Move[], difficulty: Difficulty)
 }
 
 export function reasonForMove(game: Game, move: RatedMove, comparison?: RatedMove): string {
+  const phase = detectStrategicPhase(game, game.current);
   const passAdvantage = move.evidence.nextPassRate - (comparison?.evidence.nextPassRate ?? 0);
   if (move.evidence.nextPassRate >= 28 && (!comparison || passAdvantage >= 7)) {
     return `Across the plausible hidden deals, it made ${names[(game.current + 1) % 3]} pass immediately about ${Math.round(move.evidence.nextPassRate)}% of the time${comparison ? `—${Math.round(passAdvantage)} points more often than the comparison move` : ''}.`;
+  }
+  if (phase === 'block' && move.evidence.blockedWinRate >= 12) {
+    return `The round looks close to blocking. This move won a blocked table in about ${Math.round(move.evidence.blockedWinRate)}% of the simulations and left an average of ${move.evidence.averagePipsWhenLosing.toFixed(1)} pips when it lost.`;
+  }
+  if (phase === 'late' && move.evidence.retainedEndMatches >= 1) {
+    return `Late in the round, it removes ${move.tile.a + move.tile.b} pips while keeping ${move.evidence.retainedEndMatches} connection${move.evidence.retainedEndMatches === 1 ? '' : 's'} to the new ends for an exit route.`;
   }
   if (move.evidence.blockedWinRate >= 16) {
     return `It produced a blocked-table win in about ${Math.round(move.evidence.blockedWinRate)}% of the simulations while leaving ${move.evidence.retainedEndMatches} ways back into the open numbers.`;

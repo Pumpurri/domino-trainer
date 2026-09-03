@@ -3,8 +3,19 @@
 The benchmark compares three policies:
 
 - `random` chooses an arbitrary legal move and provides a low-skill baseline.
-- `casual` uses the engine's immediate move heuristic.
-- `strong` samples hidden hands and simulates the remaining round.
+- `casual` uses the engine's phase-aware move policy.
+- `strong` samples hidden hands and simulates the remaining round with that same phase-aware policy at every future turn.
+
+## Phase-aware policy
+
+The policy identifies four strategic situations and changes its priorities accordingly:
+
+- Opening play develops connected numbers, preserves ways back into the chain, and safely unloads difficult doubles.
+- Middle play controls the ends, uses pass information, and pressures opponents with short hands.
+- Late play protects an exit route, blocks immediate threats, and reduces the pips left at risk.
+- Likely blocks compare the player's remaining pip position with estimated opponent totals and favor moves that improve the expected blocked result.
+
+Only a pass creates a certain void. Other tile choices influence hidden-hand probabilities but do not prove that a player lacks a number.
 
 ## Matched schedule
 
