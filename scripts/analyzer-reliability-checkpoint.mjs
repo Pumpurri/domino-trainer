@@ -4,7 +4,9 @@ import { basename, join, resolve } from 'node:path';
 export const RELIABILITY_CHECKPOINT_SCHEMA = 1;
 
 function stableConfig(config) {
-  return JSON.stringify(config);
+  const scientificConfig = { ...config };
+  delete scientificConfig.workers;
+  return JSON.stringify(scientificConfig);
 }
 
 async function atomicJsonWrite(destination, value) {

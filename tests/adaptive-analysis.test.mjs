@@ -176,8 +176,14 @@ test('adaptive checkpoint resumes completed positions and rejects incompatible c
   const resumed = await prepareReliabilityCheckpoint({ directory, config, resume: true });
   assert.deepEqual(resumed.results, [{ id: 'opening-01', score: 1 }]);
   assert.ok(resumed.completedIds.has('opening-01'));
+  const differentWorkerCount = await prepareReliabilityCheckpoint({
+    directory,
+    config: { ...config, workers: 2 },
+    resume: true,
+  });
+  assert.deepEqual(differentWorkerCount.results, resumed.results);
   await assert.rejects(
-    prepareReliabilityCheckpoint({ directory, config: { ...config, workers: 2 }, resume: true }),
+    prepareReliabilityCheckpoint({ directory, config: { ...config, budgets: [8] }, resume: true }),
     /configuration does not match/,
   );
 });
