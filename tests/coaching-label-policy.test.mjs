@@ -5,6 +5,7 @@ import {
   evaluateCoachingLabelPolicy,
   referenceLabel,
   replayCoachingLabel,
+  v3ReleaseGate,
 } from '../scripts/coaching-label-policy.mjs';
 
 const policy = {
@@ -64,4 +65,28 @@ test('selective gate counts uncertain answers separately from confident errors',
   assert.equal(result.rates.coverage, 4 / 6);
   assert.equal(result.rates.decidedAccuracy, 0.5);
   assert.equal(coachingLabelGate(result).passed, false);
+});
+
+test('V3 release gate combines selective labels with the frozen move checks', () => {
+  const metric = (mean) => ({ mean, low: mean, high: mean });
+  const summary = {
+    overall: { 2000: { withinOnePoint: metric(0.97), meanRegret: metric(0.1), repeatAcceptability: metric(0.93) } },
+    adaptive: {
+      withinOnePoint: metric(0.97),
+      meanRegret: metric(0.1),
+      repeatAcceptability: metric(0.94),
+      recommendationSetStability: metric(0.99),
+      samplesUsed: { mean: metric(1800) },
+    },
+  };
+  const labels = {
+    resolvedPositions: 180,
+    referenceMistakes: 25,
+    rates: { coverage: 0.8, mistakeRecall: 0.8, decidedAccuracy: 0.99, falseAccusation: 0.005, confidentMiss: 0 },
+  };
+  assert.equal(v3ReleaseGate(summary, labels, 400).passed, true);
+  assert.equal(v3ReleaseGate({
+    ...summary,
+    adaptive: { ...summary.adaptive, samplesUsed: { mean: metric(1901) } },
+  }, labels, 400).passed, false);
 });

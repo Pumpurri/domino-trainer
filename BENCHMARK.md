@@ -284,3 +284,11 @@ npm run benchmark:reliability:calibrate:v3
 ```
 
 Completed positions are checkpointed under `outputs/`; add `-- --resume` to the development command after an interruption. Only after development selection is reviewed and the label policy locked should a new, never-before-run held-out seed be evaluated. A passing new protocol is required before any live integration.
+
+### V3 development result and locked label policy
+
+The fresh development run completed all 200 balanced positions and 600 adaptive trials. Move selection was unchanged: adaptive and fixed 2,000 both placed 95.7% of recommendations within one reference point. Adaptive mean regret was 0.120 versus 0.108 for fixed 2,000, repeat acceptability was 90.5% versus 91.5%, plausible-best-set stability was 100%, and adaptive analysis used a mean of 1,735 samples.
+
+The V2 label policy already passed the new selective development gate with 80.2% coverage, 75.4% material-mistake recall, 99.8% accuracy among decided labels, a 0.18% false-accusation rate, and no confident misses. The selected label-only policy improved recall to 81.2% and coverage to 80.7%, with 99.3% decided-label accuracy, 0.53% false accusations, and no confident misses. It uses a 0.5-point practical lower bound, a 3-point minimum estimated loss, 60% positive batch agreement, and 50% practical-gap batch agreement.
+
+This policy is now locked before opening the fresh V3 holdout. The development data and full selection are stored in `benchmarks/adaptive-v3-development-200.json`, `benchmarks/adaptive-v3-development-200.md`, and `benchmarks/adaptive-v3-label-selection.json`. The new holdout uses seed `mesa-quince-adaptive-v3-holdout-v1`; its thresholds must not change after results are observed.

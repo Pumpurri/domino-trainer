@@ -1,4 +1,10 @@
 export const MATERIAL_MISTAKE_TARGET = Object.freeze({ minimumGap: 4, practicalGap: 1.5 });
+export const V2_BASELINE_LABEL_POLICY = Object.freeze({
+  practicalGap: 1.5,
+  minimumGap: 4,
+  minimumBatchAgreement: 0.75,
+  minimumPracticalBatchAgreement: 0.5,
+});
 export const SELECTIVE_LABEL_GATE = Object.freeze({
   minimumResolvedPositions: 160,
   minimumReferenceMistakes: 20,
@@ -92,4 +98,26 @@ export function coachingLabelGate(result, thresholds = SELECTIVE_LABEL_GATE) {
     confidentMiss: result.rates.confidentMiss <= thresholds.maximumConfidentMiss,
   };
   return { passed: Object.values(checks).every(Boolean), checks, thresholds };
+}
+
+export function v3ReleaseGate(summary, labelResult, positions) {
+  const fixedBaseline = summary.overall[2000];
+  const adaptive = summary.adaptive;
+  const labelGate = coachingLabelGate(labelResult);
+  const moveChecks = {
+    corpusSize: positions >= 400,
+    withinOnePoint: adaptive.withinOnePoint.mean >= 0.9,
+    meanRegret: adaptive.meanRegret.mean <= 1,
+    repeatAcceptability: adaptive.repeatAcceptability.mean >= 0.9,
+    withinOnePointNoninferior: adaptive.withinOnePoint.mean >= fixedBaseline.withinOnePoint.mean - 0.03,
+    meanRegretNoninferior: adaptive.meanRegret.mean <= fixedBaseline.meanRegret.mean + 0.05,
+    repeatAcceptabilityNoninferior: adaptive.repeatAcceptability.mean >= fixedBaseline.repeatAcceptability.mean - 0.05,
+    recommendationSetStability: adaptive.recommendationSetStability.mean >= 0.95,
+    sampleSavings: adaptive.samplesUsed.mean.mean <= 1900,
+  };
+  const checks = {
+    ...moveChecks,
+    ...Object.fromEntries(Object.entries(labelGate.checks).map(([key, value]) => [`labels.${key}`, value])),
+  };
+  return { passed: Object.values(checks).every(Boolean), checks, moveChecks, labelGate };
 }

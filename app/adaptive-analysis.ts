@@ -5,7 +5,7 @@ import {
   type StrategicPhase,
 } from './domino-engine.ts';
 
-export const ADAPTIVE_ANALYSIS_VERSION = 'adaptive-confirmed-v2';
+export const ADAPTIVE_ANALYSIS_VERSION = 'adaptive-confirmed-v3-labels';
 export const DEFAULT_ADAPTIVE_STAGES = [120, 250, 500, 1000, 2000] as const;
 
 export type AdaptiveStopReason = 'clear' | 'hard-cap';
@@ -35,9 +35,9 @@ export type AdaptiveMistakePolicy = {
 };
 
 export const DEFAULT_ADAPTIVE_MISTAKE_POLICY: AdaptiveMistakePolicy = {
-  practicalGap: 1.5,
-  minimumGap: 4,
-  minimumBatchAgreement: 0.75,
+  practicalGap: 0.5,
+  minimumGap: 3,
+  minimumBatchAgreement: 0.6,
   minimumPracticalBatchAgreement: 0.5,
   minimumBatches: 2,
   slightUpperGap: 10,

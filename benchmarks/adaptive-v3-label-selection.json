@@ -1,0 +1,600 @@
+{
+  "sourceSeed": "mesa-quince-adaptive-v3-development-v1",
+  "sourcePositions": 200,
+  "target": {
+    "minimumGap": 4,
+    "practicalGap": 1.5
+  },
+  "gate": {
+    "minimumResolvedPositions": 160,
+    "minimumReferenceMistakes": 20,
+    "minimumCoverage": 0.7,
+    "minimumMistakeRecall": 0.7,
+    "minimumDecidedAccuracy": 0.97,
+    "maximumFalseAccusation": 0.01,
+    "maximumConfidentMiss": 0.01
+  },
+  "baseline": {
+    "policy": {
+      "practicalGap": 1.5,
+      "minimumGap": 4,
+      "minimumBatchAgreement": 0.75,
+      "minimumPracticalBatchAgreement": 0.5
+    },
+    "positions": 200,
+    "resolvedPositions": 187,
+    "referenceMistakes": 23,
+    "resolvedTrials": 561,
+    "counts": {
+      "detectedMistake": 52,
+      "falseAccusation": 1,
+      "confidentMiss": 0,
+      "correctAcceptable": 397,
+      "uncertainMistake": 17,
+      "uncertainAcceptable": 94,
+      "referenceUncertain": 39
+    },
+    "rates": {
+      "coverage": 0.8021390374331551,
+      "mistakeRecall": 0.7536231884057971,
+      "decidedAccuracy": 0.9977777777777778,
+      "falseAccusation": 0.0017825311942959,
+      "confidentMiss": 0,
+      "abstention": 0.19786096256684493
+    }
+  },
+  "eligibleCandidates": 81,
+  "selected": {
+    "policy": {
+      "practicalGap": 0.5,
+      "minimumGap": 3,
+      "minimumBatchAgreement": 0.6,
+      "minimumPracticalBatchAgreement": 0.5
+    },
+    "positions": 200,
+    "resolvedPositions": 187,
+    "referenceMistakes": 23,
+    "resolvedTrials": 561,
+    "counts": {
+      "detectedMistake": 56,
+      "falseAccusation": 3,
+      "confidentMiss": 0,
+      "correctAcceptable": 394,
+      "uncertainMistake": 13,
+      "uncertainAcceptable": 95,
+      "referenceUncertain": 39
+    },
+    "rates": {
+      "coverage": 0.8074866310160428,
+      "mistakeRecall": 0.8115942028985508,
+      "decidedAccuracy": 0.9933774834437086,
+      "falseAccusation": 0.0053475935828877,
+      "confidentMiss": 0,
+      "abstention": 0.1925133689839572
+    },
+    "gate": {
+      "passed": true,
+      "checks": {
+        "resolvedPositions": true,
+        "referenceMistakes": true,
+        "coverage": true,
+        "mistakeRecall": true,
+        "decidedAccuracy": true,
+        "falseAccusation": true,
+        "confidentMiss": true
+      },
+      "thresholds": {
+        "minimumResolvedPositions": 160,
+        "minimumReferenceMistakes": 20,
+        "minimumCoverage": 0.7,
+        "minimumMistakeRecall": 0.7,
+        "minimumDecidedAccuracy": 0.97,
+        "maximumFalseAccusation": 0.01,
+        "maximumConfidentMiss": 0.01
+      }
+    }
+  },
+  "promotionRecommended": true,
+  "topCandidates": [
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.6,
+        "minimumPracticalBatchAgreement": 0.5
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 56,
+        "falseAccusation": 3,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 13,
+        "uncertainAcceptable": 95,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.8074866310160428,
+        "mistakeRecall": 0.8115942028985508,
+        "decidedAccuracy": 0.9933774834437086,
+        "falseAccusation": 0.0053475935828877,
+        "confidentMiss": 0,
+        "abstention": 0.1925133689839572
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.6,
+        "minimumPracticalBatchAgreement": 0.6
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 56,
+        "falseAccusation": 3,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 13,
+        "uncertainAcceptable": 95,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.8074866310160428,
+        "mistakeRecall": 0.8115942028985508,
+        "decidedAccuracy": 0.9933774834437086,
+        "falseAccusation": 0.0053475935828877,
+        "confidentMiss": 0,
+        "abstention": 0.1925133689839572
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.75,
+        "minimumPracticalBatchAgreement": 0.5
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.8,
+        "minimumPracticalBatchAgreement": 0.5
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.75,
+        "minimumPracticalBatchAgreement": 0.6
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.8,
+        "minimumPracticalBatchAgreement": 0.6
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.75,
+        "minimumPracticalBatchAgreement": 0.75
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.8,
+        "minimumPracticalBatchAgreement": 0.75
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 0.5,
+        "minimumGap": 3,
+        "minimumBatchAgreement": 0.6,
+        "minimumPracticalBatchAgreement": 0.75
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 2,
+        "confidentMiss": 0,
+        "correctAcceptable": 394,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 96,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.803921568627451,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9955654101995566,
+        "falseAccusation": 0.0035650623885918,
+        "confidentMiss": 0,
+        "abstention": 0.19607843137254902
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    },
+    {
+      "policy": {
+        "practicalGap": 1,
+        "minimumGap": 3.5,
+        "minimumBatchAgreement": 0.6,
+        "minimumPracticalBatchAgreement": 0.5
+      },
+      "positions": 200,
+      "resolvedPositions": 187,
+      "referenceMistakes": 23,
+      "resolvedTrials": 561,
+      "counts": {
+        "detectedMistake": 55,
+        "falseAccusation": 3,
+        "confidentMiss": 0,
+        "correctAcceptable": 395,
+        "uncertainMistake": 14,
+        "uncertainAcceptable": 94,
+        "referenceUncertain": 39
+      },
+      "rates": {
+        "coverage": 0.8074866310160428,
+        "mistakeRecall": 0.7971014492753623,
+        "decidedAccuracy": 0.9933774834437086,
+        "falseAccusation": 0.0053475935828877,
+        "confidentMiss": 0,
+        "abstention": 0.1925133689839572
+      },
+      "gate": {
+        "passed": true,
+        "checks": {
+          "resolvedPositions": true,
+          "referenceMistakes": true,
+          "coverage": true,
+          "mistakeRecall": true,
+          "decidedAccuracy": true,
+          "falseAccusation": true,
+          "confidentMiss": true
+        },
+        "thresholds": {
+          "minimumResolvedPositions": 160,
+          "minimumReferenceMistakes": 20,
+          "minimumCoverage": 0.7,
+          "minimumMistakeRecall": 0.7,
+          "minimumDecidedAccuracy": 0.97,
+          "maximumFalseAccusation": 0.01,
+          "maximumConfidentMiss": 0.01
+        }
+      }
+    }
+  ]
+}

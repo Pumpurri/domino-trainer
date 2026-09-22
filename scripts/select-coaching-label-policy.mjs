@@ -1,11 +1,11 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { DEFAULT_ADAPTIVE_MISTAKE_POLICY } from '../app/adaptive-analysis.ts';
 import {
   coachingLabelGate,
   evaluateCoachingLabelPolicy,
   MATERIAL_MISTAKE_TARGET,
   SELECTIVE_LABEL_GATE,
+  V2_BASELINE_LABEL_POLICY,
 } from './coaching-label-policy.mjs';
 
 function argument(name) {
@@ -36,10 +36,7 @@ for (const practicalGap of [0.5, 1, 1.5]) {
     }
   }
 }
-const baselinePolicy = Object.fromEntries(
-  ['practicalGap', 'minimumGap', 'minimumBatchAgreement', 'minimumPracticalBatchAgreement']
-    .map((key) => [key, DEFAULT_ADAPTIVE_MISTAKE_POLICY[key]]),
-);
+const baselinePolicy = V2_BASELINE_LABEL_POLICY;
 const baseline = evaluateCoachingLabelPolicy(source.positions, baselinePolicy);
 const eligible = candidates.filter(({ gate }) => gate.passed);
 const distance = (policy) => Object.keys(baselinePolicy)
