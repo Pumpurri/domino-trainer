@@ -56,6 +56,7 @@ export type AdaptiveChoiceAssessment = {
   batchAgreement: number;
   practicalBatchAgreement: number;
   batchCount: number;
+  batchGaps: number[];
 };
 
 export type AdaptiveStageResult = {
@@ -326,6 +327,7 @@ export function classifyAdaptiveChoice(
         ? difference.batchGaps.filter((gap) => gap > mistakePolicy.practicalGap).length / difference.batchGaps.length
         : 1,
       batchCount: batches.length,
+      batchGaps: difference.batchGaps,
     };
   }
 
@@ -357,6 +359,7 @@ export function classifyAdaptiveChoice(
     batchAgreement,
     practicalBatchAgreement,
     batchCount: batches.length,
+    batchGaps: comparison.difference.batchGaps,
   };
 }
 

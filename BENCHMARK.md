@@ -261,3 +261,26 @@ The separate 80-position development study completed 20 positions in each phase 
 V2 used 8.8% fewer samples, kept 100% plausible-best-set stability, abstained on 25.4% of coaching labels, and was correct on every non-abstained development label. It marked 78.3% of recommendations uncertain, showing that the confirmation rule is conservative. Label calibration selected and locked the existing policy unchanged: a 1.5-point practical lower bound, a 4-point minimum estimated loss, 75% positive batch agreement, and 50% practical-gap batch agreement.
 
 The run also exposed static worker tail imbalance when one unusually expensive opening remained behind a long queue. Reliability workers now take the next available position dynamically, preserving the six-worker cap while preventing idle workers when uneven positions remain.
+
+### V2 held-out result and label audit
+
+The independent 400-position held-out study is recorded in `benchmarks/adaptive-v2-holdout-400.md`. V2 passed every move-quality, repeatability, false-positive, and sample-savings check, but its binary mistake-label agreement was 93.2%, below the locked 95% requirement. This is a failed release; V2 is not used by the live coach.
+
+The frozen diagnostic in `benchmarks/adaptive-v2-label-audit.md` separates 1,200 coaching outcomes. Of 75 missed reference mistakes, 74 were explicit abstentions and one was a confident acceptable call. Seven calls falsely accused a move. The reference calls a mistake with a gap of at least three points and a paired lower bound above zero, whereas the adaptive policy requires at least four points, a lower bound above 1.5, and independent-batch agreement. The 5,000-sample reference is an estimate, not ground truth. Neither the V2 policy nor its gate is retuned against this held-out corpus.
+
+## V3 coaching-label development protocol
+
+Move ranking, recommendation stopping, and the V2 held-out result remain frozen. The next experiment changes only the coaching-label decision. A fresh development seed supplies 200 positions, balanced across four phases, with three independent adaptive trials per position. Its recorded independent-batch gaps allow candidate thresholds to be replayed correctly without rerunning or changing move selection.
+
+The product target is fixed before the next holdout: the independent 5,000-sample reference calls a **material mistake** only if the chosen move loses at least four estimated win-rate points and the paired interval's lower bound exceeds 1.5 points. It calls a move **acceptable** when it is the reference's top move or the paired interval's upper bound is below four points. Other reference positions are unresolved and excluded from label accuracy, but their count is reported. This three-way target is deliberately more meaningful than V2's legacy binary label and is not a claim of perfect truth.
+
+Among resolved reference positions, release requires at least 70% decided coverage, at least 70% material-mistake recall, at least 97% accuracy among decided labels, no more than 1% false accusations, and no more than 1% confident misses. There must be at least 160 resolved positions and 20 reference mistakes. Explicit abstentions are counted separately rather than silently becoming confident misses. The move-quality, repeatability, and sample-savings checks from V2 remain required in a fresh 400-position holdout. These thresholds are fixed now, before that holdout is generated.
+
+The development selector may vary the label-only practical gap, minimum estimated loss, and independent-batch agreement thresholds. It prioritizes recall among candidates meeting every safety and coverage check, with false accusations and decided accuracy as tie-breakers. If no candidate safely improves on the current policy, there is no automatic promotion. The V2 holdout is not an input to selection.
+
+```sh
+caffeinate -i npm run benchmark:reliability:develop:v3
+npm run benchmark:reliability:calibrate:v3
+```
+
+Completed positions are checkpointed under `outputs/`; add `-- --resume` to the development command after an interruption. Only after development selection is reviewed and the label policy locked should a new, never-before-run held-out seed be evaluated. A passing new protocol is required before any live integration.

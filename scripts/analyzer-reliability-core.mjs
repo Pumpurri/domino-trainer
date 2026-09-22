@@ -297,6 +297,7 @@ export async function evaluateReliabilityPosition(position, {
           choiceInterval: analysis.adaptive.choice?.interval ?? [0, 0],
           choiceBatchAgreement: analysis.adaptive.choice?.batchAgreement ?? 0,
           choicePracticalBatchAgreement: analysis.adaptive.choice?.practicalBatchAgreement ?? 0,
+          choiceBatchGaps: analysis.adaptive.choice?.batchGaps ?? [],
           stages: analysis.adaptive.stages,
         },
       }));

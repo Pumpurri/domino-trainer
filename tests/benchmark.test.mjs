@@ -122,6 +122,7 @@ test('reliability evaluation compares independent budgets against one reference'
   assert.ok(evaluated.adaptive.trials.every(({ recommendationKeys, mistakeConfidence }) => (
     recommendationKeys.length >= 1 && ['clear', 'uncertain'].includes(mistakeConfidence)
   )));
+  assert.ok(evaluated.adaptive.trials.every(({ choiceBatchGaps }) => choiceBatchGaps.length >= 2));
   const summary = summarizeReliability([evaluated], {
     budgets: [4, 8],
     seed: 'reliability-evaluation-test',

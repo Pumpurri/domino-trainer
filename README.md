@@ -24,6 +24,8 @@ The release selector is benchmark-gated. Deeper tree search cannot control a mov
 
 An experimental Adaptive Analyzer V2 is available to the reliability benchmark. It measures disagreement between independent simulation batches, delays early stopping according to phase and legal-move count, requires a fresh confirmation batch, and reports statistically indistinguishable moves as one plausible-best set. Recommendation confidence is separate from mistake-label confidence, so unclear coaching labels abstain. It is not used by the live coach unless a new held-out reliability gate passes.
 
+The 400-position V2 holdout failed its coaching-label agreement gate. A separate V3 label-only development protocol now audits false accusations, confident misses, and explicit uncertainty independently. Move selection and the live coach are unchanged. See [BENCHMARK.md](./BENCHMARK.md) for the locked protocol and [the V2 audit](./benchmarks/adaptive-v2-label-audit.md) for the diagnostic breakdown.
+
 ## Run locally
 
 ```sh
