@@ -421,3 +421,11 @@ caffeinate -i npm run benchmark:rollout-policies
 ```
 
 The rollout run uses nine workers and checkpoints each completed deal under `outputs/rollout-policy-v1-120.checkpoint`. Add `-- --resume` after interruption.
+
+### Rollout-policy diagnostic result
+
+The complete 120-deal run evaluated 8,640 rounds and 25,920 policy appearances. `exhaustive-forecast` was the only candidate to pass every locked check. Its round win rate was 34.40% versus 32.73% for the current rollout, a paired gain of 1.67 percentage points with a 95% interval of [0.08, 3.29]. It also improved the blocked-game win-rate estimate by 1.94 points and produced positive conditional win-rate estimates in opening, middle, late, and likely-block situations.
+
+The candidate's average losing-hand total was 0.26 pips higher, but the interval included zero and the estimate remained comfortably inside the preregistered one-pip noninferiority limit. Its average end total across all outcomes was slightly lower, 16.89 versus 17.03. The controlled mixture was effectively neutral and failed the strategic-signal check. `stochastic-top-two` was rejected after losing 3.49 percentage points overall and failing every gate.
+
+This result selects exhaustive public forecasting as the next analyzer candidate. It does not change the live coach. Promotion still requires a separately seeded, paired analyzer-quality experiment against the current rollout. The complete evidence is stored in `benchmarks/rollout-policy-v1-120.json` and `benchmarks/rollout-policy-v1-120.md`.
