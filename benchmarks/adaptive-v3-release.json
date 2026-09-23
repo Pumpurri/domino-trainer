@@ -1,0 +1,89 @@
+{
+  "generatedAt": "2026-09-23T00:33:09.321Z",
+  "source": "outputs/adaptive-v3-holdout-400.json",
+  "labelResult": {
+    "policy": {
+      "practicalGap": 0.5,
+      "minimumGap": 3,
+      "minimumBatchAgreement": 0.6,
+      "minimumPracticalBatchAgreement": 0.5,
+      "minimumBatches": 2,
+      "slightUpperGap": 10,
+      "mistakeUpperGap": 20
+    },
+    "positions": 400,
+    "resolvedPositions": 377,
+    "referenceMistakes": 52,
+    "resolvedTrials": 1131,
+    "counts": {
+      "detectedMistake": 117,
+      "falseAccusation": 9,
+      "confidentMiss": 0,
+      "correctAcceptable": 768,
+      "uncertainMistake": 39,
+      "uncertainAcceptable": 198,
+      "referenceUncertain": 69
+    },
+    "rates": {
+      "coverage": 0.7904509283819628,
+      "mistakeRecall": 0.75,
+      "decidedAccuracy": 0.9899328859060402,
+      "falseAccusation": 0.007957559681697613,
+      "confidentMiss": 0,
+      "abstention": 0.20954907161803712
+    }
+  },
+  "gate": {
+    "passed": false,
+    "checks": {
+      "corpusSize": true,
+      "withinOnePoint": true,
+      "meanRegret": true,
+      "repeatAcceptability": false,
+      "withinOnePointNoninferior": true,
+      "meanRegretNoninferior": true,
+      "repeatAcceptabilityNoninferior": true,
+      "recommendationSetStability": true,
+      "sampleSavings": true,
+      "labels.resolvedPositions": true,
+      "labels.referenceMistakes": true,
+      "labels.coverage": true,
+      "labels.mistakeRecall": true,
+      "labels.decidedAccuracy": true,
+      "labels.falseAccusation": true,
+      "labels.confidentMiss": true
+    },
+    "moveChecks": {
+      "corpusSize": true,
+      "withinOnePoint": true,
+      "meanRegret": true,
+      "repeatAcceptability": false,
+      "withinOnePointNoninferior": true,
+      "meanRegretNoninferior": true,
+      "repeatAcceptabilityNoninferior": true,
+      "recommendationSetStability": true,
+      "sampleSavings": true
+    },
+    "labelGate": {
+      "passed": true,
+      "checks": {
+        "resolvedPositions": true,
+        "referenceMistakes": true,
+        "coverage": true,
+        "mistakeRecall": true,
+        "decidedAccuracy": true,
+        "falseAccusation": true,
+        "confidentMiss": true
+      },
+      "thresholds": {
+        "minimumResolvedPositions": 160,
+        "minimumReferenceMistakes": 20,
+        "minimumCoverage": 0.7,
+        "minimumMistakeRecall": 0.7,
+        "minimumDecidedAccuracy": 0.97,
+        "maximumFalseAccusation": 0.01,
+        "maximumConfidentMiss": 0.01
+      }
+    }
+  }
+}

@@ -292,3 +292,11 @@ The fresh development run completed all 200 balanced positions and 600 adaptive 
 The V2 label policy already passed the new selective development gate with 80.2% coverage, 75.4% material-mistake recall, 99.8% accuracy among decided labels, a 0.18% false-accusation rate, and no confident misses. The selected label-only policy improved recall to 81.2% and coverage to 80.7%, with 99.3% decided-label accuracy, 0.53% false accusations, and no confident misses. It uses a 0.5-point practical lower bound, a 3-point minimum estimated loss, 60% positive batch agreement, and 50% practical-gap batch agreement.
 
 This policy is now locked before opening the fresh V3 holdout. The development data and full selection are stored in `benchmarks/adaptive-v3-development-200.json`, `benchmarks/adaptive-v3-development-200.md`, and `benchmarks/adaptive-v3-label-selection.json`. The new holdout uses seed `mesa-quince-adaptive-v3-holdout-v1`; its thresholds must not change after results are observed.
+
+### V3 held-out result
+
+The fresh 400-position holdout completed with the locked V3 label policy. Every selective coaching-label check passed: 79.0% decided coverage, 75.0% material-mistake recall, 99.0% accuracy among decided labels, 0.8% false accusations, and no confident misses across 377 resolved reference positions and 52 reference material mistakes.
+
+Move quality remained strong and noninferior to fixed 2,000. Adaptive recommendations were within one reference point 94.9% of the time, mean regret was 0.128, plausible-best-set stability was 100%, and the analyzer saved 11.8% of samples. However, repeat acceptability was 88.8%, below the predeclared 90% absolute requirement. Fixed 2,000 reached 89.0% on the same corpus. The noninferiority check passed, but the absolute check did not.
+
+V3 therefore **failed the complete release gate** and remains outside the live coach. The label-policy experiment succeeded on its stated measures, but the analyzer as a whole was not stable enough for release. The thresholds are not revised after seeing this result. Full evidence is stored in `benchmarks/adaptive-v3-holdout-400.json`, `benchmarks/adaptive-v3-holdout-400.md`, `benchmarks/adaptive-v3-release.json`, and `benchmarks/adaptive-v3-release.md`.

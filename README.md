@@ -26,6 +26,8 @@ An experimental Adaptive Analyzer V2 is available to the reliability benchmark. 
 
 The 400-position V2 holdout failed its coaching-label agreement gate. A separate V3 label-only development protocol now audits false accusations, confident misses, and explicit uncertainty independently. Move selection and the live coach are unchanged. See [BENCHMARK.md](./BENCHMARK.md) for the locked protocol and [the V2 audit](./benchmarks/adaptive-v2-label-audit.md) for the diagnostic breakdown.
 
+The fresh V3 holdout passed every selective coaching-label check and all move-quality checks except the locked repeat-acceptability requirement, which reached 88.8% instead of 90%. V3 therefore remains outside the live coach.
+
 ## Run locally
 
 ```sh
