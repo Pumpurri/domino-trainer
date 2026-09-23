@@ -7,9 +7,35 @@ import {
 
 export const ADAPTIVE_ANALYSIS_VERSION = 'adaptive-confirmed-v3-labels';
 export const ADAPTIVE_REFINEMENT_VERSION = 'adaptive-confirmed-v4-top-set-refinement';
+export const ADAPTIVE_SELECTION_VERSION = 'adaptive-v5-robust-selection';
 export const DEFAULT_ADAPTIVE_STAGES = [120, 250, 500, 1000, 2000] as const;
 export const DEFAULT_ADAPTIVE_REFINEMENT_SAMPLES = 250;
 export const DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP = 3;
+export const ADAPTIVE_SELECTION_POLICIES = [
+  'mean',
+  'confidence-adjusted',
+  'pairwise-minimax',
+  'batch-consensus',
+  'downside-protected',
+] as const;
+
+export type AdaptiveSelectionPolicy = typeof ADAPTIVE_SELECTION_POLICIES[number];
+
+export type AdaptiveSelectionCandidateEvidence = {
+  key: string;
+  meanWinRate: number;
+  confidenceAdjusted: number;
+  pairwiseMinimax: number;
+  batchConsensus: number;
+  downsideProtected: number;
+  score: number;
+};
+
+export type AdaptiveSelectionResult = {
+  policy: AdaptiveSelectionPolicy;
+  selectedKey: string;
+  candidates: AdaptiveSelectionCandidateEvidence[];
+};
 
 export type AdaptiveStopReason = 'clear' | 'hard-cap';
 export type AdaptiveConfidence = 'clear' | 'uncertain';
@@ -303,6 +329,82 @@ export function plausibleBestMoveKeys(
     })
     .map(moveKey)
     .sort();
+}
+
+export function selectAdaptiveMove({
+  ranked,
+  batches,
+  plausibleBestKeys = plausibleBestMoveKeys(ranked, batches),
+  policy,
+  practicalGap = 1,
+}: {
+  ranked: RatedMove[];
+  batches: RatedMove[][];
+  plausibleBestKeys?: readonly string[];
+  policy: AdaptiveSelectionPolicy;
+  practicalGap?: number;
+}): AdaptiveSelectionResult {
+  if (!ranked.length) throw new Error('Adaptive selection requires at least one ranked move.');
+  if (!batches.length) throw new Error('Adaptive selection requires at least one independent batch.');
+  if (!ADAPTIVE_SELECTION_POLICIES.includes(policy)) {
+    throw new Error(`Unknown adaptive selection policy: ${policy}.`);
+  }
+  if (!Number.isFinite(practicalGap) || practicalGap < 0) {
+    throw new Error('Adaptive selection practical gap must be nonnegative.');
+  }
+
+  const rankByKey = new Map(ranked.map((move, index) => [moveKey(move), index]));
+  const candidateKeys = [...new Set(plausibleBestKeys)]
+    .filter((key) => rankByKey.has(key))
+    .sort((left, right) => rankByKey.get(left)! - rankByKey.get(right)! || left.localeCompare(right));
+  if (!candidateKeys.length) throw new Error('Adaptive selection has no plausible candidate moves.');
+
+  const candidates = candidateKeys.map((key) => {
+    const move = moveForKey(ranked, key);
+    const relevantBatches = batches.filter((batch) => batch.some((candidate) => moveKey(candidate) === key));
+    const relativeBatchGaps = relevantBatches.map((batch) => {
+      const candidate = moveForKey(batch, key);
+      const availableCandidates = candidateKeys
+        .filter((candidateKey) => batch.some((entry) => moveKey(entry) === candidateKey))
+        .map((candidateKey) => moveForKey(batch, candidateKey));
+      const batchLeaderRate = Math.max(...availableCandidates.map((entry) => entry.winRate));
+      return candidate.winRate - batchLeaderRate;
+    });
+    const pairwiseLowerBounds = candidateKeys
+      .filter((comparisonKey) => comparisonKey !== key)
+      .map((comparisonKey) => clusteredRatedMoveDifference(batches, key, comparisonKey).interval[0]);
+    const pairwiseMinimax = pairwiseLowerBounds.length ? Math.min(...pairwiseLowerBounds) : 0;
+    const batchConsensus = relativeBatchGaps.length
+      ? relativeBatchGaps.filter((gap) => gap >= -practicalGap).length / relativeBatchGaps.length
+      : 0;
+    const downsideProtected = relativeBatchGaps.length ? Math.min(...relativeBatchGaps) : 0;
+    const confidenceAdjusted = move.winRate - move.margin;
+    const score = policy === 'mean'
+      ? move.winRate
+      : policy === 'confidence-adjusted'
+        ? confidenceAdjusted
+        : policy === 'pairwise-minimax'
+          ? pairwiseMinimax
+          : policy === 'batch-consensus'
+            ? batchConsensus
+            : downsideProtected;
+    return {
+      key,
+      meanWinRate: move.winRate,
+      confidenceAdjusted,
+      pairwiseMinimax,
+      batchConsensus,
+      downsideProtected,
+      score,
+    };
+  });
+  const selected = [...candidates].sort((left, right) => (
+    right.score - left.score
+    || right.meanWinRate - left.meanWinRate
+    || rankByKey.get(left.key)! - rankByKey.get(right.key)!
+    || left.key.localeCompare(right.key)
+  ))[0];
+  return { policy, selectedKey: selected.key, candidates };
 }
 
 function closestPlausibleComparison(

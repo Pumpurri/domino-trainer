@@ -12,10 +12,12 @@ import {
 } from '../app/domino-engine.ts';
 import {
   DEFAULT_ADAPTIVE_STAGES,
+  ADAPTIVE_SELECTION_VERSION,
   adaptiveAnalysisVersion,
   pairedRatedMoveDifference,
   plausibleBestMoveKeys,
   runAdaptiveAnalysis,
+  selectAdaptiveMove,
 } from '../app/adaptive-analysis.ts';
 import { createMatchedDeal, gameFromMatchedDeal } from './benchmark-core.mjs';
 
@@ -168,6 +170,7 @@ async function runAdaptiveBenchmarkAnalysis(
 ) {
   const started = performance.now();
   let preRefinementElapsedMs = 0;
+  const batches = [];
   const adaptive = await runAdaptiveAnalysis({
     stages,
     playedKey,
@@ -184,6 +187,7 @@ async function runAdaptiveBenchmarkAnalysis(
         `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
         candidateKeys,
       );
+      batches.push(batch.ranked);
       if (!candidateKeys) preRefinementElapsedMs += batch.elapsedMs;
       return batch.ranked;
     },
@@ -193,6 +197,7 @@ async function runAdaptiveBenchmarkAnalysis(
     ranked: adaptive.ranked,
     elapsedMs: performance.now() - started,
     preRefinementElapsedMs,
+    batches,
   };
 }
 
@@ -221,6 +226,7 @@ function adaptiveTrialMetadata(snapshot, playedKey, refinementSamples = 0, refin
 function evaluatedTrial({
   repetition,
   ranked,
+  selectedKey,
   elapsedMs,
   choice,
   referenceTopKey,
@@ -231,7 +237,7 @@ function evaluatedTrial({
   exactKeys,
   metadata = {},
 }) {
-  const topKey = moveKey(ranked[0]);
+  const topKey = selectedKey ?? moveKey(ranked[0]);
   const selectedReferenceRate = referenceRates.get(topKey);
   if (selectedReferenceRate === undefined) throw new Error(`Reference analysis is missing ${topKey}.`);
   return {
@@ -267,6 +273,7 @@ export async function evaluateReliabilityPosition(position, {
   adaptiveMistakePolicy,
   adaptiveRefinementSamples = 0,
   adaptiveRefinementMaximumGap = 3,
+  adaptiveSelectionPolicies = [],
   seed = 'mesa-quince-reliability-v1',
 } = {}) {
   const safeGame = informationSafeBenchmarkGame(position.game);
@@ -303,6 +310,7 @@ export async function evaluateReliabilityPosition(position, {
 
   const adaptiveTrials = [];
   const adaptiveControlTrials = [];
+  const adaptiveVariantTrials = Object.fromEntries(adaptiveSelectionPolicies.map((policy) => [policy, []]));
   if (includeAdaptive) {
     for (let repetition = 0; repetition < repetitions; repetition += 1) {
       const analysis = await runAdaptiveBenchmarkAnalysis(
@@ -351,6 +359,39 @@ export async function evaluateReliabilityPosition(position, {
           analysis.adaptive.refinementKeys,
         ),
       }));
+      for (const policy of adaptiveSelectionPolicies) {
+        const selection = selectAdaptiveMove({
+          ranked: analysis.ranked,
+          batches: analysis.batches,
+          plausibleBestKeys: analysis.adaptive.plausibleBestKeys,
+          policy,
+          practicalGap: adaptiveRecommendationGap,
+        });
+        adaptiveVariantTrials[policy].push(evaluatedTrial({
+          repetition,
+          ranked: analysis.ranked,
+          selectedKey: selection.selectedKey,
+          elapsedMs: analysis.elapsedMs,
+          choice: analysis.adaptive.choice,
+          referenceTopKey,
+          referenceBestKeys,
+          referenceChoice,
+          referenceRates,
+          referenceBestRate,
+          exactKeys,
+          metadata: {
+            ...adaptiveTrialMetadata(
+              analysis.adaptive,
+              position.playedKey,
+              analysis.adaptive.refinementSamples,
+              analysis.adaptive.refinementKeys,
+            ),
+            selectionPolicy: policy,
+            selectionChanged: selection.selectedKey !== moveKey(analysis.ranked[0]),
+            selectionEvidence: selection.candidates,
+          },
+        }));
+      }
     }
   }
 
@@ -390,6 +431,12 @@ export async function evaluateReliabilityPosition(position, {
       refinementMaximumGap: adaptiveRefinementMaximumGap,
       trials: adaptiveControlTrials,
     } : null,
+    adaptiveVariants: includeAdaptive ? Object.fromEntries(adaptiveSelectionPolicies.map((policy) => [policy, {
+      version: ADAPTIVE_SELECTION_VERSION,
+      selectionPolicy: policy,
+      stages: [...adaptiveStages],
+      trials: adaptiveVariantTrials[policy],
+    }])) : {},
   };
 }
 
@@ -489,9 +536,14 @@ function summarizeBudget(positionResults, budget, seed, confidenceResamples) {
   );
 }
 
-function summarizeAdaptive(positionResults, seed, confidenceResamples, field = 'adaptive') {
-  const relevant = positionResults.filter((position) => position[field]?.trials?.length);
-  const trialsFor = (position) => position[field].trials;
+function summarizeAdaptive(
+  positionResults,
+  seed,
+  confidenceResamples,
+  readAdaptive = (position) => position.adaptive,
+) {
+  const relevant = positionResults.filter((position) => readAdaptive(position)?.trials?.length);
+  const trialsFor = (position) => readAdaptive(position).trials;
   const summary = summarizeTrials(relevant, trialsFor, `${seed}|adaptive`, confidenceResamples);
   const allTrials = relevant.flatMap(trialsFor);
   const samples = allTrials.map(({ samplesUsed }) => samplesUsed).sort((left, right) => left - right);
@@ -523,6 +575,7 @@ function summarizeAdaptive(positionResults, seed, confidenceResamples, field = '
     hardCapRate: rate('hard-cap', (trial) => trial.stopReason === 'hard-cap' ? 1 : 0),
     uncertainRate: rate('uncertain', (trial) => trial.recommendationConfidence === 'uncertain' ? 1 : 0),
     refinementRate: rate('refinement', (trial) => trial.refinementSamples > 0 ? 1 : 0),
+    selectionChangeRate: rate('selection-change', (trial) => trial.selectionChanged ? 1 : 0),
     recommendationSetSize: intervalForPositionMeans(relevant.map((position) => {
       const trials = trialsFor(position);
       return trials.reduce((sum, trial) => sum + (trial.recommendationKeys?.length ?? 1), 0) / trials.length;
@@ -568,11 +621,23 @@ export function summarizeReliability(positionResults, {
     budget,
     summarizeBudget(group, budget, `${seed}|${label}`, confidenceResamples),
   ]));
-  const summarizeAdaptiveGroup = (group, label, field = 'adaptive') => summarizeAdaptive(
+  const summarizeAdaptiveGroup = (
+    group,
+    label,
+    readAdaptive = (position) => position.adaptive,
+  ) => summarizeAdaptive(
     group,
     `${seed}|${label}`,
     confidenceResamples,
-    field,
+    readAdaptive,
+  );
+  const adaptiveVariantPolicies = [...new Set(positionResults.flatMap((position) => (
+    Object.keys(position.adaptiveVariants ?? {})
+  )))].sort();
+  const summarizeVariantGroup = (group, label, policy) => summarizeAdaptiveGroup(
+    group,
+    label,
+    (position) => position.adaptiveVariants?.[policy],
   );
   const exactPositions = positionResults.filter((position) => position.exactOracleKeys);
   return {
@@ -597,8 +662,12 @@ export function summarizeReliability(positionResults, {
     overall: summarizeGroup(positionResults, 'overall'),
     adaptive: summarizeAdaptiveGroup(positionResults, 'overall'),
     adaptiveControl: positionResults.some((position) => position.adaptiveControl?.trials?.length)
-      ? summarizeAdaptiveGroup(positionResults, 'overall', 'adaptiveControl')
+      ? summarizeAdaptiveGroup(positionResults, 'overall', (position) => position.adaptiveControl)
       : null,
+    adaptiveVariants: Object.fromEntries(adaptiveVariantPolicies.map((policy) => [
+      policy,
+      summarizeVariantGroup(positionResults, 'overall', policy),
+    ])),
     byPhase: Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
       phase,
       summarizeGroup(positionResults.filter((position) => position.phase === phase), phase),
@@ -613,10 +682,21 @@ export function summarizeReliability(positionResults, {
         summarizeAdaptiveGroup(
           positionResults.filter((position) => position.phase === phase),
           phase,
-          'adaptiveControl',
+          (position) => position.adaptiveControl,
         ),
       ]))
       : null,
+    adaptiveVariantsByPhase: Object.fromEntries(adaptiveVariantPolicies.map((policy) => [
+      policy,
+      Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
+        phase,
+        summarizeVariantGroup(
+          positionResults.filter((position) => position.phase === phase),
+          phase,
+          policy,
+        ),
+      ])),
+    ])),
     branchingCounts: Object.fromEntries(RELIABILITY_BRANCHING_BANDS.map((band) => [
       band,
       positionResults.filter((position) => branchingBand(position.branching) === band).length,
@@ -638,9 +718,34 @@ export function summarizeReliability(positionResults, {
         summarizeAdaptiveGroup(
           positionResults.filter((position) => branchingBand(position.branching) === band),
           `branching-${band}`,
-          'adaptiveControl',
+          (position) => position.adaptiveControl,
         ),
       ]))
       : null,
+    adaptiveVariantsByBranching: Object.fromEntries(adaptiveVariantPolicies.map((policy) => [
+      policy,
+      Object.fromEntries(RELIABILITY_BRANCHING_BANDS.map((band) => [
+        band,
+        summarizeVariantGroup(
+          positionResults.filter((position) => branchingBand(position.branching) === band),
+          `branching-${band}`,
+          policy,
+        ),
+      ])),
+    ])),
   };
+}
+
+export function adaptiveSelectionDevelopmentGate(candidate, control) {
+  const checks = {
+    changesDecisions: candidate.selectionChangeRate.mean > 0,
+    repeatAcceptabilityTarget: candidate.repeatAcceptability.mean >= 0.9,
+    repeatAcceptabilityNoninferior: candidate.repeatAcceptability.mean >= control.repeatAcceptability.mean,
+    withinOnePointNoninferior: candidate.withinOnePoint.mean >= control.withinOnePoint.mean - 0.01,
+    meanRegretNoninferior: candidate.meanRegret.mean <= control.meanRegret.mean + 0.02,
+    mistakeLabelAgreementPreserved: candidate.mistakeLabelAgreement.mean >= control.mistakeLabelAgreement.mean,
+    falseAccusationsPreserved: candidate.falsePositiveMistakes.mean <= control.falsePositiveMistakes.mean,
+    sampleUsagePreserved: candidate.samplesUsed.mean.mean <= control.samplesUsed.mean.mean,
+  };
+  return { passed: Object.values(checks).every(Boolean), checks };
 }

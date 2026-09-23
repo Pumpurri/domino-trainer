@@ -9,6 +9,7 @@ import {
   clusteredRatedMoveDifference,
   plausibleBestMoveKeys,
   runAdaptiveAnalysis,
+  selectAdaptiveMove,
 } from '../app/adaptive-analysis.ts';
 import { prepareReliabilityCheckpoint } from '../scripts/analyzer-reliability-checkpoint.mjs';
 
@@ -172,6 +173,48 @@ test('clustered comparisons ignore candidate-only batches missing one compared m
 
   assert.equal(difference.gap, 0);
   assert.deepEqual(difference.batchGaps, [0]);
+});
+
+test('robust selection policies reuse batches and can reject an unstable mean leader', () => {
+  const wins = (count, total = 10) => [...Array(count).fill(1), ...Array(total - count).fill(0)];
+  const consensusBatches = [
+    [ratedMove('1-2', wins(10)), ratedMove('1-3', wins(7))],
+    [ratedMove('1-2', wins(6)), ratedMove('1-3', wins(7))],
+    [ratedMove('1-2', wins(6)), ratedMove('1-3', wins(7))],
+  ];
+  const consensusRanked = [ratedMove('1-2', wins(22, 30)), ratedMove('1-3', wins(21, 30))];
+  const shared = {
+    ranked: consensusRanked,
+    batches: consensusBatches,
+    plausibleBestKeys: ['1-2:left', '1-3:left'],
+  };
+
+  assert.equal(selectAdaptiveMove({ ...shared, policy: 'mean' }).selectedKey, '1-2:left');
+  const consensus = selectAdaptiveMove({ ...shared, policy: 'batch-consensus' });
+  assert.equal(consensus.selectedKey, '1-3:left');
+  assert.equal(consensus.candidates.length, 2);
+
+  const downsideBatches = [
+    [ratedMove('1-2', wins(81, 100)), ratedMove('1-3', wins(70, 100))],
+    [ratedMove('1-2', wins(81, 100)), ratedMove('1-3', wins(70, 100))],
+    [ratedMove('1-2', wins(50, 100)), ratedMove('1-3', wins(70, 100))],
+  ];
+  const downsideRanked = [ratedMove('1-2', wins(212, 300)), ratedMove('1-3', wins(210, 300))];
+  assert.equal(selectAdaptiveMove({
+    ranked: downsideRanked,
+    batches: downsideBatches,
+    plausibleBestKeys: ['1-2:left', '1-3:left'],
+    policy: 'downside-protected',
+  }).selectedKey, '1-3:left');
+
+  const noisy = { ...ratedMove('1-2', wins(6)), margin: 30 };
+  const stable = { ...ratedMove('1-3', wins(5)), winRate: 58, margin: 8 };
+  assert.equal(selectAdaptiveMove({
+    ranked: [noisy, stable],
+    batches: [[noisy, stable]],
+    plausibleBestKeys: ['1-2:left', '1-3:left'],
+    policy: 'confidence-adjusted',
+  }).selectedKey, '1-3:left');
 });
 
 test('statistically equivalent leaders share one acceptable best-move set', () => {

@@ -1,6 +1,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
+  ADAPTIVE_SELECTION_POLICIES,
+  ADAPTIVE_SELECTION_VERSION,
   DEFAULT_ADAPTIVE_MISTAKE_POLICY,
   DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP,
   adaptiveAnalysisVersion,
@@ -10,6 +12,7 @@ import {
   RELIABILITY_BRANCHING_BANDS,
   RELIABILITY_PHASES,
   adaptiveReliabilityGate,
+  adaptiveSelectionDevelopmentGate,
   collectDecisionCorpus,
   reliabilityGate,
   summarizeReliability,
@@ -60,6 +63,14 @@ function numberList(value, fallback, label) {
   return [...new Set(entries)].sort((left, right) => left - right);
 }
 
+function selectionPolicyList(value) {
+  if (!value) return [];
+  const policies = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))];
+  const invalid = policies.filter((policy) => !ADAPTIVE_SELECTION_POLICIES.includes(policy));
+  if (invalid.length) throw new Error(`Unknown adaptive selection policies: ${invalid.join(', ')}.`);
+  return policies.filter((policy) => policy !== 'mean');
+}
+
 function percent(metric) {
   return `${(metric.mean * 100).toFixed(1)}% [${(metric.low * 100).toFixed(1)}, ${(metric.high * 100).toFixed(1)}]`;
 }
@@ -72,26 +83,49 @@ function metricRow(label, row) {
   return `${label} | ${percent(row.exactTopAgreement)} | ${percent(row.topAgreement)} | ${percent(row.withinOnePoint)} | ${points(row.meanRegret)} | ${percent(row.mistakeLabelAgreement)} | ${percent(row.falsePositiveMistakes)} | ${percent(row.falseNegativeMistakes)} | ${percent(row.mistakeAbstentionRate)} | ${percent(row.decidedMistakeAccuracy)} | ${percent(row.repeatAcceptability)} | ${percent(row.recommendationSetStability)} | ${Math.round(row.runtimeMs.mean)} / ${Math.round(row.runtimeMs.p95)} ms`;
 }
 
-function printTable(title, fixed, adaptive, budgets, adaptiveControl) {
+function selectionLabel(policy) {
+  return policy.split('-').map((word) => word[0].toUpperCase() + word.slice(1)).join(' ');
+}
+
+function printTable(title, fixed, adaptive, budgets, adaptiveControl, adaptiveVariants = {}) {
   console.log(`\n${title}`);
   console.log('Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time');
   console.log('--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---');
   budgets.forEach((budget) => console.log(metricRow(`Fixed ${budget}`, fixed[budget])));
   if (adaptiveControl?.trials) console.log(metricRow('Adaptive control', adaptiveControl));
-  if (adaptive?.trials) console.log(metricRow(adaptiveControl ? 'Adaptive refined' : 'Adaptive', adaptive));
+  if (adaptive?.trials) console.log(metricRow(
+    adaptiveControl ? 'Adaptive refined' : Object.keys(adaptiveVariants).length ? 'Adaptive mean' : 'Adaptive',
+    adaptive,
+  ));
+  Object.entries(adaptiveVariants).forEach(([policy, row]) => {
+    if (row?.trials) console.log(metricRow(`Selection ${selectionLabel(policy)}`, row));
+  });
 }
 
-function markdownTable(fixed, adaptive, budgets, adaptiveControl) {
+function markdownTable(fixed, adaptive, budgets, adaptiveControl, adaptiveVariants = {}) {
   return [
     '| Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time |',
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ...budgets.map((budget) => `| ${metricRow(`Fixed ${budget}`, fixed[budget])} |`),
     ...(adaptiveControl?.trials ? [`| ${metricRow('Adaptive control', adaptiveControl)} |`] : []),
-    ...(adaptive?.trials ? [`| ${metricRow(adaptiveControl ? 'Adaptive refined' : 'Adaptive', adaptive)} |`] : []),
+    ...(adaptive?.trials ? [`| ${metricRow(
+      adaptiveControl ? 'Adaptive refined' : Object.keys(adaptiveVariants).length ? 'Adaptive mean' : 'Adaptive',
+      adaptive,
+    )} |`] : []),
+    ...Object.entries(adaptiveVariants)
+      .filter(([, row]) => row?.trials)
+      .map(([policy, row]) => `| ${metricRow(`Selection ${selectionLabel(policy)}`, row)} |`),
   ].join('\n');
 }
 
-function renderReport({ config, summary, budgets, adaptiveGate }) {
+function renderReport({
+  config,
+  summary,
+  budgets,
+  adaptiveGate,
+  adaptiveVariantGates,
+  selectionDecision,
+}) {
   const comparisonBudget = Math.max(...budgets);
   const comparison = summary.overall[comparisonBudget];
   const sampleSavings = comparisonBudget
@@ -121,6 +155,9 @@ function renderReport({ config, summary, budgets, adaptiveGate }) {
       summary.adaptiveByPhase[phase],
       budgets,
       summary.adaptiveControlByPhase?.[phase],
+      Object.fromEntries(Object.entries(summary.adaptiveVariantsByPhase).map(([policy, phases]) => (
+        [policy, phases[phase]]
+      ))),
     )}`
   ));
   const branchingSections = RELIABILITY_BRANCHING_BANDS
@@ -130,9 +167,20 @@ function renderReport({ config, summary, budgets, adaptiveGate }) {
       summary.adaptiveByBranching[band],
       budgets,
       summary.adaptiveControlByBranching?.[band],
+      Object.fromEntries(Object.entries(summary.adaptiveVariantsByBranching).map(([policy, bands]) => (
+        [policy, bands[band]]
+      ))),
     )}`);
   const pairedControlComparison = summary.adaptiveControl
     ? `\n\nThe V3 control and refined candidate share the same reference, fixed-budget results, and pre-refinement adaptive stages. The control is captured immediately before candidate-only refinement, so this comparison adds no duplicate simulations. Timing is reported separately because shared execution changes timing boundaries.`
+    : '';
+  const selectionGateRows = Object.entries(adaptiveVariantGates).flatMap(([policy, gate]) => (
+    Object.entries(gate.checks).map(([check, passed]) => (
+      `| ${selectionLabel(policy)} | ${check} | ${passed ? 'PASS' : 'FAIL'} |`
+    ))
+  ));
+  const selectionConclusion = config.adaptiveSelectionPolicies?.length
+    ? `\n\nThe V5 selection experiment evaluated ${config.adaptiveSelectionPolicies.length} policies from the same adaptive simulations. ${selectionDecision.selectedPolicy ? `The development winner is **${selectionLabel(selectionDecision.selectedPolicy)}**. It may advance to a separately locked holdout, but it is not a live-coach promotion.` : 'No policy passed every predeclared development check, so none may advance to a holdout or the live coach.'}`
     : '';
   return `# Mesa Quince adaptive analyzer reliability study
 
@@ -146,6 +194,7 @@ Generated: ${new Date().toISOString()}
 - Adaptive stages: ${config.adaptiveStages.join(', ')}
 - Candidate-only refinement: ${config.adaptiveRefinementSamples ? `${config.adaptiveRefinementSamples} samples when the unresolved top-set gap is at most ${config.adaptiveRefinementMaximumGap} points` : 'disabled'}
 - Paired pre-refinement control: ${config.captureAdaptiveControl ? 'captured from the same run' : 'not requested'}
+- Robust selection policies: ${config.adaptiveSelectionPolicies?.length ? config.adaptiveSelectionPolicies.join(', ') : 'disabled'}
 - Recommendation equivalence gap: ${config.adaptiveRecommendationGap} point(s)
 - Mistake practical gap: ${config.adaptiveMistakePolicy.practicalGap} point(s)
 - Mistake minimum estimated loss: ${config.adaptiveMistakePolicy.minimumGap} point(s)
@@ -164,11 +213,11 @@ The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release
 
 The sampler allocated more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. Its median stopping budget was ${summary.adaptive.samplesUsed.p50}, ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of recommendations ended uncertain, and ${(summary.adaptive.mistakeAbstentionRate.mean * 100).toFixed(1)}% of coaching labels abstained. Failed release checks: ${failedChecks.length ? failedChecks.join(', ') : 'none'}.
 
-This adaptive sampler widens uncertainty when independent batches disagree, requires a fresh confirmation batch before early stopping, delays decisions according to phase and legal-move count, and treats statistically equivalent moves as one plausible-best set. Recommendation confidence and mistake confidence are separate, so the coach can abstain from a mistake label even when it still offers a tentative move.${pairedControlComparison}
+This adaptive sampler widens uncertainty when independent batches disagree, requires a fresh confirmation batch before early stopping, delays decisions according to phase and legal-move count, and treats statistically equivalent moves as one plausible-best set. Recommendation confidence and mistake confidence are separate, so the coach can abstain from a mistake label even when it still offers a tentative move.${pairedControlComparison}${selectionConclusion}
 
 ## Overall results
 
-${markdownTable(summary.overall, summary.adaptive, budgets, summary.adaptiveControl)}
+${markdownTable(summary.overall, summary.adaptive, budgets, summary.adaptiveControl, summary.adaptiveVariants)}
 
 ## Adaptive computation
 
@@ -196,6 +245,15 @@ Adaptive result: **${adaptiveGate.passed ? 'PASS' : 'FAIL'}**
 | Check | Result |
 | --- | --- |
 ${gateRows.join('\n')}
+
+${selectionGateRows.length ? `## V5 selection-development gates
+
+Selected policy: **${selectionDecision.selectedPolicy ? selectionLabel(selectionDecision.selectedPolicy) : 'none'}**
+
+| Policy | Check | Result |
+| --- | --- | --- |
+${selectionGateRows.join('\n')}
+` : ''}
 
 ## Results by phase
 
@@ -238,6 +296,9 @@ const adaptiveRecommendationGap = nonnegativeNumber(
   argument('adaptive-recommendation-gap') ?? process.env.MESA_RELIABILITY_ADAPTIVE_RECOMMENDATION_GAP,
   1,
   'Adaptive recommendation gap',
+);
+const adaptiveSelectionPolicies = selectionPolicyList(
+  argument('adaptive-selection-policies') ?? process.env.MESA_RELIABILITY_ADAPTIVE_SELECTION_POLICIES,
 );
 const adaptiveRefinementSamples = nonnegativeInteger(
   argument('adaptive-refinement-samples') ?? process.env.MESA_RELIABILITY_ADAPTIVE_REFINEMENT_SAMPLES,
@@ -305,6 +366,10 @@ const config = {
   includeAdaptive: !fixedOnly,
   adaptiveStages,
   adaptiveVersion: adaptiveAnalysisVersion(adaptiveRefinementSamples),
+  ...(adaptiveSelectionPolicies.length ? {
+    adaptiveSelectionVersion: ADAPTIVE_SELECTION_VERSION,
+    adaptiveSelectionPolicies,
+  } : {}),
   adaptiveRecommendationGap,
   adaptiveMistakePolicy,
   ...(adaptiveRefinementSamples > 0 ? {
@@ -350,6 +415,7 @@ const freshResults = pendingPositions.length
       adaptiveMistakePolicy,
       adaptiveRefinementSamples,
       adaptiveRefinementMaximumGap,
+      adaptiveSelectionPolicies,
     },
     workerCount: workers,
     onProgress: (positionId) => {
@@ -364,13 +430,23 @@ const summary = summarizeReliability(results, { budgets, seed, confidenceResampl
 
 console.log(`\nCORPUS\n${summary.positions} positions | ${RELIABILITY_PHASES.map((phase) => `${phase} ${summary.phaseCounts[phase]}`).join(' | ')}`);
 console.log(`Reference marked ${summary.reference.clearRecommendations}/${summary.positions} recommendations statistically clear.`);
-printTable('OVERALL RELIABILITY', summary.overall, summary.adaptive, budgets, summary.adaptiveControl);
+printTable(
+  'OVERALL RELIABILITY',
+  summary.overall,
+  summary.adaptive,
+  budgets,
+  summary.adaptiveControl,
+  summary.adaptiveVariants,
+);
 RELIABILITY_PHASES.forEach((phase) => printTable(
   `${phase.toUpperCase()} RELIABILITY`,
   summary.byPhase[phase],
   summary.adaptiveByPhase[phase],
   budgets,
   summary.adaptiveControlByPhase?.[phase],
+  Object.fromEntries(Object.entries(summary.adaptiveVariantsByPhase).map(([policy, phases]) => (
+    [policy, phases[phase]]
+  ))),
 ));
 RELIABILITY_BRANCHING_BANDS.forEach((band) => {
   if (summary.branchingCounts[band]) printTable(
@@ -379,6 +455,9 @@ RELIABILITY_BRANCHING_BANDS.forEach((band) => {
     summary.adaptiveByBranching[band],
     budgets,
     summary.adaptiveControlByBranching?.[band],
+    Object.fromEntries(Object.entries(summary.adaptiveVariantsByBranching).map(([policy, bands]) => (
+      [policy, bands[band]]
+    ))),
   );
 });
 
@@ -396,6 +475,26 @@ const adaptiveGate = adaptiveReliabilityGate(
   summary.overall[adaptiveBaselineBudget],
   adaptiveBaselineBudget,
 );
+const adaptiveVariantGates = Object.fromEntries(Object.entries(summary.adaptiveVariants).map(([policy, row]) => [
+  policy,
+  adaptiveSelectionDevelopmentGate(row, summary.adaptive),
+]));
+const passingSelectionPolicies = Object.entries(adaptiveVariantGates)
+  .filter(([, gate]) => gate.passed)
+  .map(([policy]) => policy)
+  .sort((left, right) => (
+    summary.adaptiveVariants[right].repeatAcceptability.mean
+      - summary.adaptiveVariants[left].repeatAcceptability.mean
+    || summary.adaptiveVariants[left].meanRegret.mean
+      - summary.adaptiveVariants[right].meanRegret.mean
+    || summary.adaptiveVariants[right].withinOnePoint.mean
+      - summary.adaptiveVariants[left].withinOnePoint.mean
+    || left.localeCompare(right)
+  ));
+const selectionDecision = {
+  selectedPolicy: passingSelectionPolicies[0] ?? null,
+  passingPolicies: passingSelectionPolicies,
+};
 console.log('\nGATE');
 budgets.forEach((budget) => console.log(`Fixed ${budget}: ${fixedGates[budget].passed ? 'PASS' : 'FAIL'}`));
 if (!fixedOnly) {
@@ -403,13 +502,20 @@ if (!fixedOnly) {
   console.log(`Adaptive samples: mean ${summary.adaptive.samplesUsed.mean.mean.toFixed(0)}, p50 ${summary.adaptive.samplesUsed.p50}, p95 ${summary.adaptive.samplesUsed.p95}, maximum ${summary.adaptive.samplesUsed.maximum}.`);
   console.log(`Adaptive stopped uncertain in ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of trials.`);
 }
+Object.entries(adaptiveVariantGates).forEach(([policy, gate]) => {
+  console.log(`Selection ${selectionLabel(policy)}: ${gate.passed ? 'PASS' : 'FAIL'}`);
+});
+if (adaptiveSelectionPolicies.length) {
+  console.log(`V5 development winner: ${selectionDecision.selectedPolicy ? selectionLabel(selectionDecision.selectedPolicy) : 'none'}.`);
+}
 
 const output = {
   generatedAt: new Date().toISOString(),
   config,
   corpus: results.map(({ id, phase, branching, handSizes, eventCount, playedKey, exactOracleKeys }) => ({ id, phase, branching, handSizes, eventCount, playedKey, exactOracleKeys })),
   summary,
-  gates: { fixed: fixedGates, adaptive: adaptiveGate },
+  gates: { fixed: fixedGates, adaptive: adaptiveGate, adaptiveVariants: adaptiveVariantGates },
+  selectionDecision,
   positions: results,
 };
 if (jsonPath) {
@@ -421,7 +527,14 @@ if (jsonPath) {
 if (reportPath) {
   const destination = resolve(process.cwd(), reportPath);
   await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, renderReport({ config, summary, budgets, adaptiveGate }));
+  await writeFile(destination, renderReport({
+    config,
+    summary,
+    budgets,
+    adaptiveGate,
+    adaptiveVariantGates,
+    selectionDecision,
+  }));
   console.log(`Saved Markdown report to ${destination}`);
 }
 
@@ -432,6 +545,10 @@ console.log('- Adaptive stages accumulate prior paired outcomes, widen intervals
 if (adaptiveRefinementSamples > 0) {
   console.log(`- Unresolved close decisions receive one ${adaptiveRefinementSamples}-sample paired batch restricted to their plausible-best candidates.`);
   console.log('- The reference, fixed budgets, and ordinary adaptive stages run once. The pre-refinement V3 control is snapshotted before the V4 batch.');
+}
+if (adaptiveSelectionPolicies.length) {
+  console.log(`- ${adaptiveSelectionPolicies.length} robust selectors reuse the same adaptive batches and add no simulation samples.`);
+  console.log('- Coaching labels remain frozen to the shared adaptive evidence, so this experiment changes move selection only.');
 }
 console.log('- Phase and legal-move count set minimum budgets. Statistically equivalent leaders are reported as one plausible-best set.');
 console.log('- Recommendation confidence is independent from mistake-label confidence; unclear mistake labels abstain.');

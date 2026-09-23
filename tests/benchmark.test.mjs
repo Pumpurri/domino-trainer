@@ -13,6 +13,7 @@ import { strategicScenarios } from '../scripts/strategic-scenarios.mjs';
 import {
   RELIABILITY_PHASES,
   adaptiveReliabilityGate,
+  adaptiveSelectionDevelopmentGate,
   collectDecisionCorpus,
   evaluateReliabilityPosition,
   informationSafeBenchmarkGame,
@@ -105,6 +106,31 @@ test('adaptive release gate requires absolute quality, baseline noninferiority, 
   }, 80, baseline, 1000).passed, false);
 });
 
+test('selection development gate requires changed decisions and preserves shared evidence', () => {
+  const metric = (mean) => ({ mean, low: mean, high: mean });
+  const control = {
+    repeatAcceptability: metric(0.89),
+    withinOnePoint: metric(0.95),
+    meanRegret: metric(0.11),
+    mistakeLabelAgreement: metric(0.92),
+    falsePositiveMistakes: metric(0.01),
+    samplesUsed: { mean: metric(1775) },
+  };
+  const candidate = {
+    ...control,
+    selectionChangeRate: metric(0.03),
+    repeatAcceptability: metric(0.9),
+    withinOnePoint: metric(0.945),
+    meanRegret: metric(0.12),
+  };
+
+  assert.equal(adaptiveSelectionDevelopmentGate(candidate, control).passed, true);
+  assert.equal(adaptiveSelectionDevelopmentGate({
+    ...candidate,
+    selectionChangeRate: metric(0),
+  }, control).passed, false);
+});
+
 test('reliability evaluation compares independent budgets against one reference', async () => {
   const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-evaluation-test' });
   const evaluated = await evaluateReliabilityPosition(position, {
@@ -112,6 +138,7 @@ test('reliability evaluation compares independent budgets against one reference'
     repetitions: 2,
     referenceBudget: 12,
     adaptiveStages: [4, 8],
+    adaptiveSelectionPolicies: ['confidence-adjusted', 'downside-protected'],
     seed: 'reliability-evaluation-test',
   });
   assert.equal(evaluated.budgets[4].trials.length, 2);
@@ -123,6 +150,18 @@ test('reliability evaluation compares independent budgets against one reference'
     recommendationKeys.length >= 1 && ['clear', 'uncertain'].includes(mistakeConfidence)
   )));
   assert.ok(evaluated.adaptive.trials.every(({ choiceBatchGaps }) => choiceBatchGaps.length >= 2));
+  assert.deepEqual(Object.keys(evaluated.adaptiveVariants), ['confidence-adjusted', 'downside-protected']);
+  assert.ok(evaluated.adaptiveVariants['confidence-adjusted'].trials.every(({ selectionEvidence }) => (
+    selectionEvidence.length >= 1
+  )));
+  assert.deepEqual(
+    evaluated.adaptiveVariants['confidence-adjusted'].trials.map(({ samplesUsed }) => samplesUsed),
+    evaluated.adaptive.trials.map(({ samplesUsed }) => samplesUsed),
+  );
+  assert.deepEqual(
+    evaluated.adaptiveVariants['confidence-adjusted'].trials.map(({ mistakeAssessment }) => mistakeAssessment),
+    evaluated.adaptive.trials.map(({ mistakeAssessment }) => mistakeAssessment),
+  );
   const summary = summarizeReliability([evaluated], {
     budgets: [4, 8],
     seed: 'reliability-evaluation-test',
@@ -136,6 +175,8 @@ test('reliability evaluation compares independent budgets against one reference'
   assert.ok(summary.adaptive.samplesUsed.maximum <= 8);
   assert.ok(summary.adaptive.recommendationSetSize.mean >= 1);
   assert.ok(summary.adaptive.mistakeAbstentionRate.mean >= 0);
+  assert.equal(summary.adaptiveVariants['confidence-adjusted'].trials, 2);
+  assert.equal(summary.adaptiveVariants['downside-protected'].samplesUsed.mean.mean, summary.adaptive.samplesUsed.mean.mean);
 });
 
 test('paired refinement reuses reference, fixed budgets, and the exact pre-refinement control', async () => {
@@ -191,6 +232,7 @@ test('fixed and adaptive reliability analysis ignore changed real hidden hands',
     repetitions: 1,
     referenceBudget: 8,
     adaptiveStages: [4, 8],
+    adaptiveSelectionPolicies: ['batch-consensus'],
     seed: 'reliability-hidden-safety',
   };
   const [first, second] = await Promise.all([
@@ -215,13 +257,23 @@ test('fixed and adaptive reliability analysis ignore changed real hidden hands',
     }) => (
       [topKey, verdict, recommendationConfidence, recommendationKeys, mistakeConfidence, samplesUsed]
     )),
+    adaptiveVariant: result.adaptiveVariants['batch-consensus'].trials.map(({ topKey, samplesUsed }) => (
+      [topKey, samplesUsed]
+    )),
   });
   assert.deepEqual(decisionSignature(first), decisionSignature(second));
 });
 
 test('parallel reliability workers preserve deterministic decisions and labels', async () => {
   const positions = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-parallel-test' }).slice(0, 2);
-  const options = { budgets: [4], repetitions: 1, referenceBudget: 8, adaptiveStages: [4, 8], seed: 'reliability-parallel-test' };
+  const options = {
+    budgets: [4],
+    repetitions: 1,
+    referenceBudget: 8,
+    adaptiveStages: [4, 8],
+    adaptiveSelectionPolicies: ['downside-protected'],
+    seed: 'reliability-parallel-test',
+  };
   const sequential = await Promise.all(positions.map((position) => evaluateReliabilityPosition(position, options)));
   const parallel = await evaluateReliabilityParallel({ positions, options, workerCount: 2 });
   const decisions = (results) => results.map((result) => ({
@@ -231,6 +283,7 @@ test('parallel reliability workers preserve deterministic decisions and labels',
     trialTop: result.budgets[4].trials[0].topKey,
     trialVerdict: result.budgets[4].trials[0].verdict,
     trialRegret: result.budgets[4].trials[0].regret,
+    selectionTop: result.adaptiveVariants['downside-protected'].trials[0].topKey,
   })).sort((left, right) => left.id.localeCompare(right.id));
   assert.deepEqual(decisions(parallel), decisions(sequential));
 });
