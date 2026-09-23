@@ -249,6 +249,8 @@ export type PracticeReplay = {
 };
 export type AnalysisOptions = {
   representativeLimit?: number;
+  representativePoolSize?: number;
+  representativeOffset?: number;
   shardIndex?: number;
   shardCount?: number;
   rootCandidateKeys?: readonly string[];
@@ -2383,9 +2385,25 @@ function analyzeMovesForPlayer(
   if (!moves.length) return [];
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
   const persistentParticles = currentBeliefParticles(game, perspective, beliefState);
-  let samples = persistentParticles
-    ? representativeParticles(persistentParticles, options?.representativeLimit ?? interactiveSearchSamples)
-    : buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`, styles);
+  let samples: BeliefParticle[];
+  if (persistentParticles) {
+    const representativeLimit = Math.floor(options?.representativeLimit ?? interactiveSearchSamples);
+    const representativeOffset = Math.floor(options?.representativeOffset ?? 0);
+    const representativePoolSize = Math.floor(options?.representativePoolSize ?? representativeLimit);
+    if (representativeLimit <= 0 || representativeOffset < 0 || representativePoolSize <= 0) {
+      throw new Error('Representative analysis window values must be positive, with a nonnegative offset.');
+    }
+    if (representativeOffset + representativeLimit > representativePoolSize) {
+      throw new Error('Representative analysis window exceeds its shared pool.');
+    }
+    const representativePool = representativeParticles(persistentParticles, representativePoolSize);
+    if (representativePool.length < representativePoolSize) {
+      throw new Error('Belief state does not contain enough particles for the requested representative pool.');
+    }
+    samples = representativePool.slice(representativeOffset, representativeOffset + representativeLimit);
+  } else {
+    samples = buildParticles(game, perspective, sampleCount, `analysis|${stateKey}`, styles);
+  }
   const shardCount = Math.max(1, Math.floor(options?.shardCount ?? 1));
   const shardIndex = Math.max(0, Math.min(shardCount - 1, Math.floor(options?.shardIndex ?? 0)));
   if (shardCount > 1) samples = samples.filter((_, index) => index % shardCount === shardIndex);

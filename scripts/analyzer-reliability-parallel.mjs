@@ -5,9 +5,9 @@ export function reliabilityWorkerCount(positionCount) {
   return Math.max(1, Math.min(positionCount, Math.max(1, availableParallelism() - 1), 8));
 }
 
-function runBatch(positions, options, onProgress, onResult) {
+function runBatch(positions, options, onProgress, onResult, workerUrl) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./analyzer-reliability-worker.mjs', import.meta.url), {
+    const worker = new Worker(workerUrl, {
       workerData: { positions, options },
     });
     let complete = false;
@@ -30,7 +30,14 @@ function runBatch(positions, options, onProgress, onResult) {
   });
 }
 
-export async function evaluateReliabilityParallel({ positions, options, workerCount, onProgress, onResult }) {
+export async function evaluatePositionsParallel({
+  positions,
+  options,
+  workerCount,
+  onProgress,
+  onResult,
+  workerUrl,
+}) {
   const count = workerCount ?? reliabilityWorkerCount(positions.length);
   const results = [];
   let nextIndex = 0;
@@ -38,10 +45,23 @@ export async function evaluateReliabilityParallel({ positions, options, workerCo
     while (nextIndex < positions.length) {
       const index = nextIndex;
       nextIndex += 1;
-      const [result] = await runBatch([positions[index]], options, onProgress, onResult);
+      const [result] = await runBatch(
+        [positions[index]],
+        options,
+        onProgress,
+        onResult,
+        workerUrl,
+      );
       results.push(result);
     }
   });
   await Promise.all(workers);
   return results.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function evaluateReliabilityParallel(options) {
+  return evaluatePositionsParallel({
+    ...options,
+    workerUrl: new URL('./analyzer-reliability-worker.mjs', import.meta.url),
+  });
 }

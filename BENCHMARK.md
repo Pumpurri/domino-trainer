@@ -328,3 +328,17 @@ The fresh development seed is `mesa-quince-adaptive-v5-development-v1`, with 200
 The full 200-position development run completed, and no V5 selector passed. The mean selector reached 87.5% repeat acceptability, 94.0% within-one-point quality, and 0.131 mean regret. Pairwise minimax was the only directionally positive alternative at 88.5%, 94.2%, and 0.130, but it changed only 0.8% of decisions and remained below the locked 90% repeatability target. Batch consensus reduced repeat acceptability to 86.5%. Downside protection changed 12.0% of decisions but degraded repeat acceptability to 76.5%, within-one-point quality to 89.5%, and mean regret to 0.266. Confidence adjustment changed no decisions.
 
 The failure is concentrated in difficult early decisions rather than late play. Mean-selector repeat acceptability was 62.0% in opening positions and 41.7% among the twelve positions with at least six legal moves, compared with 98.0% in both late and blocked positions. The high-branching slice is small and diagnostic, not a new release gate. V5 will not advance to a holdout or the live coach. The next experiment isolates one-shot sampling, staged aggregation, and adaptive stopping with matched particles and rollout outcomes. See `benchmarks/adaptive-v5-development-comparison.md` for the recorded decision.
+
+### Paired sampler-ablation protocol
+
+This is a causal diagnostic, not a V6 candidate or a release study. The fresh seed `mesa-quince-sampler-ablation-v1` supplies 48 positions from distinct deals: 24 opening positions with at least six legal moves and 24 middle positions with at least four. Each position receives three repetitions, the cumulative stages 120, 250, 500, 1,000, and 2,000, and a separate 5,000-sample reference. The corpus and interpretation below are fixed before opening the full dataset.
+
+Within each repetition, one shared 2,000-particle representative sequence is evaluated two ways: as one batch and as disjoint stage windows of 120, 130, 250, 500, and 1,000 particles. Every particle weight and paired root-move outcome must match exactly after merging, and every evaluation uses the same deterministic rollout policy. The same staged results are replayed through the ordinary adaptive stopping rules and through a forced-2,000 control without rerunning simulations. A second staged sequence preserves current production-like behavior by rebuilding an information-safe belief sample for each stage; it too is replayed with ordinary and forced stopping. The diagnostic never receives the opponents' realized hidden tiles and does not persist sampled hands.
+
+Any top, ranking, paired-outcome, weight, sample-count, or win-rate mismatch between the shared one-shot analysis and the shared forced-stage merge identifies an aggregation or sample-window defect. Early stopping is considered materially harmful when the early variant loses more than two percentage points of within-one-point quality, loses more than three percentage points of repeat acceptability, or adds more than 0.03 mean regret against its forced control. Independent stage sampling uses the same thresholds against the shared forced control. Results are paired within positions and bootstrapped across complete positions. The diagnostic chooses a component to investigate; it cannot promote an analyzer or change the live coach.
+
+```sh
+caffeinate -i npm run benchmark:sampler-ablation
+```
+
+The run uses nine worker threads and an atomic per-position checkpoint at `outputs/sampler-ablation-v1-48.checkpoint`. Add `-- --resume` after an interruption.

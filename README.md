@@ -30,6 +30,8 @@ The fresh V3 holdout passed every selective coaching-label check and all move-qu
 
 The V4 candidate-only refinement and V5 robust-selection experiments both failed development and remain outside the live coach. V5 showed that instability is concentrated in opening and high-branching decisions, so the next benchmark isolates sampling, staged aggregation, and early stopping before another analyzer is proposed.
 
+The paired sampler-ablation benchmark is available as `npm run benchmark:sampler-ablation`. It uses matched hidden-deal particles to distinguish aggregation, stopping, and independent stage-sampling effects without changing the product analyzer.
+
 ## Run locally
 
 ```sh

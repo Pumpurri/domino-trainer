@@ -581,3 +581,38 @@ test('multicore analysis shards merge to the same paired release evaluation', ()
   });
   assert.deepEqual(candidateOnly.map(moveKey).sort(), ['1-5:left', '8-9:right']);
 });
+
+test('representative windows partition one fixed particle pool without changing evidence', () => {
+  const ownHand = [tile(1, 5), tile(1, 7), tile(8, 9), tile(2, 2)];
+  const available = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));
+  const game = playingGame({ hands: [ownHand, available.slice(0, 5), available.slice(5, 10)], chain: [placed('1-9', 1, 9)] });
+  const beliefs = createBeliefState(game, 0, 36, undefined, 'representative-window-test');
+  const oneShot = analyzeMoves(game, 36, beliefs, undefined, {
+    representativeLimit: 24,
+    representativePoolSize: 24,
+  });
+  const staged = mergeMoveAnalyses([
+    analyzeMoves(game, 36, beliefs, undefined, {
+      representativeLimit: 8,
+      representativePoolSize: 24,
+      representativeOffset: 0,
+    }),
+    analyzeMoves(game, 36, beliefs, undefined, {
+      representativeLimit: 16,
+      representativePoolSize: 24,
+      representativeOffset: 8,
+    }),
+  ]);
+
+  assert.deepEqual(staged.map(moveKey), oneShot.map(moveKey));
+  staged.forEach((move, index) => {
+    assert.equal(move.winRate, oneShot[index].winRate);
+    assert.deepEqual(move.treeSearch.pairedBaseWins, oneShot[index].treeSearch.pairedBaseWins);
+    assert.deepEqual(move.treeSearch.pairedBaseWeights, oneShot[index].treeSearch.pairedBaseWeights);
+  });
+  assert.throws(() => analyzeMoves(game, 36, beliefs, undefined, {
+    representativeLimit: 12,
+    representativePoolSize: 20,
+    representativeOffset: 12,
+  }), /exceeds its shared pool/);
+});
