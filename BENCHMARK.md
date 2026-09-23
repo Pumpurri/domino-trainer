@@ -375,3 +375,20 @@ caffeinate -i npm run benchmark:reliability:develop:v6
 ```
 
 The run uses nine worker threads and atomic per-position checkpoints at `outputs/adaptive-v6-phase-aware-development-200.checkpoint`. Add `-- --resume` after an interruption.
+
+### V6 phase-aware sampling result
+
+The full 200-position development run completed all 600 trials. V6 failed four locked checks and is retired without a holdout or live-coach change.
+
+| Measure | Independent-stage control | Phase-aware candidate |
+| --- | ---: | ---: |
+| Repeat acceptability | 90.0% | 89.5% |
+| Within one reference point | 94.5% | 94.3% |
+| Mean regret | 0.118 | 0.125 |
+| Mistake-label agreement | 94.0% | 94.2% |
+| False-positive mistakes | 1.17% | 1.17% |
+| Mean samples | 1,797.5 | 1,802.5 |
+
+The candidate changed 12.7% of middle-game recommendations, proving the new path was exercised. Those changes moved in the wrong direction: middle-game mean regret rose from 0.094 to 0.124 instead of improving by the required 0.03, and middle repeat acceptability fell from 90% to 88%. Overall repeat acceptability missed the 90% target by half a percentage point, and mean sample use increased by five.
+
+Within-one-point quality, overall regret noninferiority, mistake-label agreement, and false-accusation safety all passed. That is not enough to rescue the candidate because the preregistered middle-game benefit did not appear. The result rejects phase-aware persistent sampling and moves the next investigation to the deterministic rollout policy. The full evidence is stored in `benchmarks/adaptive-v6-development-200.json` and `benchmarks/adaptive-v6-development-200.md`.

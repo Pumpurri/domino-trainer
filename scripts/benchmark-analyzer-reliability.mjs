@@ -176,6 +176,9 @@ function renderReport({
   const runtimeSavings = comparison.runtimeMs.mean
     ? (1 - summary.adaptive.runtimeMs.mean / comparison.runtimeMs.mean) * 100
     : 0;
+  const runtimeComparison = runtimeSavings >= 0
+    ? `${runtimeSavings.toFixed(1)}% less mean wall time`
+    : `${Math.abs(runtimeSavings).toFixed(1)}% more mean wall time`;
   const falsePositiveChange = (summary.adaptive.falsePositiveMistakes.mean - comparison.falsePositiveMistakes.mean) * 100;
   const closeAllocation = summary.adaptive.samplesByReferenceClarity.clear.mean
     ? summary.adaptive.samplesByReferenceClarity.unclear.mean / summary.adaptive.samplesByReferenceClarity.clear.mean
@@ -266,7 +269,7 @@ The reference is an independent high-budget estimate, not perfect ground truth. 
 
 ## Conclusion
 
-The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release gate** and ${adaptiveGate.passed ? 'can proceed to controlled release integration' : 'must remain outside the live coach'}. It ${matchedComparison ? 'matched or improved' : 'did not match'} fixed ${comparisonBudget} on the combined near-optimality, regret, and repeatability comparison. It used ${sampleSavings.toFixed(1)}% fewer paired samples and ${runtimeSavings.toFixed(1)}% less mean wall time, while its false-positive mistake rate changed by ${falsePositiveChange >= 0 ? '+' : ''}${falsePositiveChange.toFixed(2)} percentage points.
+The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release gate** and ${adaptiveGate.passed ? 'can proceed to controlled release integration' : 'must remain outside the live coach'}. It ${matchedComparison ? 'matched or improved' : 'did not match'} fixed ${comparisonBudget} on the combined near-optimality, regret, and repeatability comparison. It used ${sampleSavings.toFixed(1)}% fewer paired samples and ${runtimeComparison}, while its false-positive mistake rate changed by ${falsePositiveChange >= 0 ? '+' : ''}${falsePositiveChange.toFixed(2)} percentage points.
 
 The sampler allocated more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. Its median stopping budget was ${summary.adaptive.samplesUsed.p50}, ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of recommendations ended uncertain, and ${(summary.adaptive.mistakeAbstentionRate.mean * 100).toFixed(1)}% of coaching labels abstained. Failed release checks: ${failedChecks.length ? failedChecks.join(', ') : 'none'}.
 
