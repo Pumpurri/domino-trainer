@@ -28,7 +28,7 @@ The 400-position V2 holdout failed its coaching-label agreement gate. A separate
 
 The fresh V3 holdout passed every selective coaching-label check and all move-quality checks except the locked repeat-acceptability requirement, which reached 88.8% instead of 90%. V3 therefore remains outside the live coach.
 
-The V4 candidate-only refinement experiment failed development and remains outside the live coach. A V5 benchmark-only experiment now compares robust selection rules from the same adaptive simulations, adding no extra samples. Any winner must pass fresh development and a separately locked holdout before product integration.
+The V4 candidate-only refinement and V5 robust-selection experiments both failed development and remain outside the live coach. V5 showed that instability is concentrated in opening and high-branching decisions, so the next benchmark isolates sampling, staged aggregation, and early stopping before another analyzer is proposed.
 
 ## Run locally
 
