@@ -28,6 +28,8 @@ The 400-position V2 holdout failed its coaching-label agreement gate. A separate
 
 The fresh V3 holdout passed every selective coaching-label check and all move-quality checks except the locked repeat-acceptability requirement, which reached 88.8% instead of 90%. V3 therefore remains outside the live coach.
 
+An experimental V4 development path now gives unresolved close decisions one candidate-only paired refinement batch. It remains benchmark-only until it passes a fresh development comparison and a separately locked holdout.
+
 ## Run locally
 
 ```sh

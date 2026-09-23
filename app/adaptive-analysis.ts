@@ -6,7 +6,10 @@ import {
 } from './domino-engine.ts';
 
 export const ADAPTIVE_ANALYSIS_VERSION = 'adaptive-confirmed-v3-labels';
+export const ADAPTIVE_REFINEMENT_VERSION = 'adaptive-confirmed-v4-top-set-refinement';
 export const DEFAULT_ADAPTIVE_STAGES = [120, 250, 500, 1000, 2000] as const;
+export const DEFAULT_ADAPTIVE_REFINEMENT_SAMPLES = 250;
+export const DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP = 3;
 
 export type AdaptiveStopReason = 'clear' | 'hard-cap';
 export type AdaptiveConfidence = 'clear' | 'uncertain';
@@ -89,6 +92,8 @@ export type AdaptiveAnalysisResult = {
   stopReason: AdaptiveStopReason;
   recommendationConfidence: AdaptiveRecommendationConfidence;
   plausibleBestKeys: string[];
+  refinementSamples: number;
+  refinementKeys: string[];
   stages: AdaptiveStageResult[];
   choice: AdaptiveChoiceAssessment | null;
 };
@@ -106,12 +111,22 @@ export type AdaptiveAnalysisOptions = {
   branching?: number;
   minimumSamples?: number;
   recommendationPracticalGap?: number;
+  refinementSamples?: number;
+  refinementMaximumGap?: number;
   mistakePolicy?: Partial<AdaptiveMistakePolicy>;
   requiredStableChecks?: number;
   shouldCancel?: () => boolean;
   onStage?: (stage: AdaptiveStageResult, ranked: RatedMove[]) => void;
-  analyzeBatch: (batchSamples: number, stageIndex: number) => RatedMove[] | Promise<RatedMove[]>;
+  analyzeBatch: (
+    batchSamples: number,
+    stageIndex: number,
+    candidateKeys?: readonly string[],
+  ) => RatedMove[] | Promise<RatedMove[]>;
 };
+
+export function adaptiveAnalysisVersion(refinementSamples = 0): string {
+  return refinementSamples > 0 ? ADAPTIVE_REFINEMENT_VERSION : ADAPTIVE_ANALYSIS_VERSION;
+}
 
 function moveKey(move: RatedMove): string {
   return `${move.tile.id}:${move.side}`;
@@ -217,21 +232,28 @@ export function clusteredRatedMoveDifference(
   comparisonKey: string,
 ): ClusteredMoveDifference {
   if (!batches.length) throw new Error('Clustered comparison requires at least one independent batch.');
+  const relevantBatches = batches.filter((batch) => (
+    batch.some((move) => moveKey(move) === betterKey)
+    && batch.some((move) => moveKey(move) === comparisonKey)
+  ));
+  if (!relevantBatches.length) {
+    throw new Error(`No adaptive batch contains both ${betterKey} and ${comparisonKey}.`);
+  }
   if (betterKey === comparisonKey) {
     return {
       gap: 0,
       interval: [0, 0],
       pooledInterval: [0, 0],
       betweenBatchSpread: 0,
-      batchGaps: batches.map(() => 0),
+      batchGaps: relevantBatches.map(() => 0),
     };
   }
-  const merged = mergeMoveAnalyses(batches);
+  const merged = mergeMoveAnalyses(relevantBatches);
   const pooled = pairedRatedMoveDifference(
     moveForKey(merged, betterKey),
     moveForKey(merged, comparisonKey),
   );
-  const estimates = batches.map((batch) => {
+  const estimates = relevantBatches.map((batch) => {
     const better = moveForKey(batch, betterKey);
     const comparison = moveForKey(batch, comparisonKey);
     return {
@@ -326,18 +348,19 @@ export function classifyAdaptiveChoice(
       practicalBatchAgreement: difference.batchGaps.length
         ? difference.batchGaps.filter((gap) => gap > mistakePolicy.practicalGap).length / difference.batchGaps.length
         : 1,
-      batchCount: batches.length,
+      batchCount: difference.batchGaps.length,
       batchGaps: difference.batchGaps,
     };
   }
 
   const comparison = closestPlausibleComparison(batches, ranked, plausibleBestKeys, playedKey);
-  const batchAgreement = comparison.difference.batchGaps.filter((gap) => gap > 0).length / batches.length;
+  const comparisonBatchCount = comparison.difference.batchGaps.length;
+  const batchAgreement = comparison.difference.batchGaps.filter((gap) => gap > 0).length / comparisonBatchCount;
   const practicalBatchAgreement = comparison.difference.batchGaps
-    .filter((gap) => gap > mistakePolicy.practicalGap).length / batches.length;
+    .filter((gap) => gap > mistakePolicy.practicalGap).length / comparisonBatchCount;
   const definitelyWorse = comparison.difference.gap >= mistakePolicy.minimumGap
     && comparison.difference.interval[0] > mistakePolicy.practicalGap
-    && batches.length >= mistakePolicy.minimumBatches
+    && comparisonBatchCount >= mistakePolicy.minimumBatches
     && batchAgreement >= mistakePolicy.minimumBatchAgreement
     && practicalBatchAgreement >= mistakePolicy.minimumPracticalBatchAgreement;
   const verdict: DecisionVerdict = !definitelyWorse
@@ -358,7 +381,7 @@ export function classifyAdaptiveChoice(
     plausibleBestKeys,
     batchAgreement,
     practicalBatchAgreement,
-    batchCount: batches.length,
+    batchCount: comparisonBatchCount,
     batchGaps: comparison.difference.batchGaps,
   };
 }
@@ -469,6 +492,8 @@ export async function runAdaptiveAnalysis({
   branching,
   minimumSamples: suppliedMinimumSamples,
   recommendationPracticalGap = 1,
+  refinementSamples = 0,
+  refinementMaximumGap = DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP,
   mistakePolicy: suppliedMistakePolicy,
   requiredStableChecks = 2,
   shouldCancel,
@@ -477,6 +502,12 @@ export async function runAdaptiveAnalysis({
 }: AdaptiveAnalysisOptions): Promise<AdaptiveAnalysisResult> {
   const stages = validateStages(suppliedStages);
   if (recommendationPracticalGap < 0) throw new Error('The recommendation practical gap cannot be negative.');
+  if (!Number.isInteger(refinementSamples) || refinementSamples < 0) {
+    throw new Error('Adaptive refinement samples must be a nonnegative integer.');
+  }
+  if (!Number.isFinite(refinementMaximumGap) || refinementMaximumGap < 0) {
+    throw new Error('The adaptive refinement maximum gap must be nonnegative.');
+  }
   if (!Number.isInteger(requiredStableChecks) || requiredStableChecks < 2) {
     throw new Error('Adaptive analysis requires at least two stable checks.');
   }
@@ -523,6 +554,8 @@ export async function runAdaptiveAnalysis({
         stopReason: 'clear',
         recommendationConfidence: 'clear',
         plausibleBestKeys: stage.plausibleBestKeys,
+        refinementSamples: 0,
+        refinementKeys: [],
         stages: history,
         choice: playedKey ? classifyAdaptiveChoice(ranked, playedKey, {
           batches,
@@ -533,7 +566,36 @@ export async function runAdaptiveAnalysis({
     }
   }
 
-  const finalStage = history.at(-1)!;
+  let finalStage = history.at(-1)!;
+  let refinementKeys: string[] = [];
+  if (
+    refinementSamples > 0
+    && finalStage.plausibleBestKeys.length > 1
+    && finalStage.gap <= refinementMaximumGap
+  ) {
+    refinementKeys = [...finalStage.plausibleBestKeys];
+    const refinementBatch = await analyzeBatch(refinementSamples, stages.length, refinementKeys);
+    const returnedKeys = new Set(refinementBatch.map(moveKey));
+    const missing = refinementKeys.filter((key) => !returnedKeys.has(key));
+    if (missing.length) throw new Error(`Adaptive refinement batch is missing candidate moves: ${missing.join(', ')}.`);
+    batches.push(refinementBatch);
+    ranked = mergeMoveAnalyses(batches);
+    finalStage = stageAssessment({
+      ranked,
+      batches,
+      history,
+      targetSamples: finalStage.targetSamples + refinementSamples,
+      batchSamples: refinementSamples,
+      playedKey,
+      minimumSamples,
+      recommendationPracticalGap,
+      mistakePolicy,
+      requiredStableChecks,
+    });
+    history.push(finalStage);
+    onStage?.(finalStage, ranked);
+  }
+
   return {
     ranked,
     samplesUsed: finalStage.targetSamples,
@@ -542,6 +604,8 @@ export async function runAdaptiveAnalysis({
     stopReason: 'hard-cap',
     recommendationConfidence: 'uncertain',
     plausibleBestKeys: finalStage.plausibleBestKeys,
+    refinementSamples: refinementKeys.length ? refinementSamples : 0,
+    refinementKeys,
     stages: history,
     choice: playedKey ? classifyAdaptiveChoice(ranked, playedKey, {
       batches,

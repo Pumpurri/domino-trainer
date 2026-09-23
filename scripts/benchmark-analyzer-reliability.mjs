@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import {
-  ADAPTIVE_ANALYSIS_VERSION,
   DEFAULT_ADAPTIVE_MISTAKE_POLICY,
+  DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP,
+  adaptiveAnalysisVersion,
   DEFAULT_ADAPTIVE_STAGES,
 } from '../app/adaptive-analysis.ts';
 import {
@@ -28,6 +29,13 @@ function positiveInteger(value, fallback, label) {
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${label} must be a positive integer.`);
+  return parsed;
+}
+
+function nonnegativeInteger(value, fallback, label) {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label} must be a nonnegative integer.`);
   return parsed;
 }
 
@@ -121,6 +129,7 @@ Generated: ${new Date().toISOString()}
 - ${config.repetitions} independent repetitions per analyzer
 - Fixed budgets: ${budgets.join(', ')}
 - Adaptive stages: ${config.adaptiveStages.join(', ')}
+- Candidate-only refinement: ${config.adaptiveRefinementSamples ? `${config.adaptiveRefinementSamples} samples when the unresolved top-set gap is at most ${config.adaptiveRefinementMaximumGap} points` : 'disabled'}
 - Recommendation equivalence gap: ${config.adaptiveRecommendationGap} point(s)
 - Mistake practical gap: ${config.adaptiveMistakePolicy.practicalGap} point(s)
 - Mistake minimum estimated loss: ${config.adaptiveMistakePolicy.minimumGap} point(s)
@@ -153,6 +162,7 @@ ${markdownTable(summary.overall, summary.adaptive, budgets)}
 - Maximum samples: ${summary.adaptive.samplesUsed.maximum}
 - Hard-cap rate: ${percent(summary.adaptive.hardCapRate)}
 - Uncertain-at-stop rate: ${percent(summary.adaptive.uncertainRate)}
+- Candidate-refinement rate: ${percent(summary.adaptive.refinementRate)}
 - Mean plausible-best set size: ${points(summary.adaptive.recommendationSetSize)}
 - Coaching-label abstention rate: ${percent(summary.adaptive.mistakeAbstentionRate)}
 - Accuracy among non-abstained coaching labels: ${percent(summary.adaptive.decidedMistakeAccuracy)}
@@ -213,6 +223,16 @@ const adaptiveRecommendationGap = nonnegativeNumber(
   1,
   'Adaptive recommendation gap',
 );
+const adaptiveRefinementSamples = nonnegativeInteger(
+  argument('adaptive-refinement-samples') ?? process.env.MESA_RELIABILITY_ADAPTIVE_REFINEMENT_SAMPLES,
+  0,
+  'Adaptive refinement sample count',
+);
+const adaptiveRefinementMaximumGap = nonnegativeNumber(
+  argument('adaptive-refinement-max-gap') ?? process.env.MESA_RELIABILITY_ADAPTIVE_REFINEMENT_MAX_GAP,
+  DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP,
+  'Adaptive refinement maximum gap',
+);
 const adaptiveMistakePolicy = {
   ...DEFAULT_ADAPTIVE_MISTAKE_POLICY,
   practicalGap: nonnegativeNumber(
@@ -268,9 +288,13 @@ const config = {
   workers,
   includeAdaptive: !fixedOnly,
   adaptiveStages,
-  adaptiveVersion: ADAPTIVE_ANALYSIS_VERSION,
+  adaptiveVersion: adaptiveAnalysisVersion(adaptiveRefinementSamples),
   adaptiveRecommendationGap,
   adaptiveMistakePolicy,
+  ...(adaptiveRefinementSamples > 0 ? {
+    adaptiveRefinementSamples,
+    adaptiveRefinementMaximumGap,
+  } : {}),
 };
 
 console.log('MESA QUINCE ANALYZER RELIABILITY BENCHMARK');
@@ -307,6 +331,8 @@ const freshResults = pendingPositions.length
       adaptiveStages,
       adaptiveRecommendationGap,
       adaptiveMistakePolicy,
+      adaptiveRefinementSamples,
+      adaptiveRefinementMaximumGap,
     },
     workerCount: workers,
     onProgress: (positionId) => {
@@ -384,6 +410,7 @@ console.log('\nNOTES');
 console.log('- Each phase contributes the same number of positions. Confidence intervals resample complete positions, not individual repeated runs.');
 console.log('- Each fixed run, adaptive batch, and reference uses independently seeded plausible hidden deals consistent with public evidence. Every legal move within one batch receives the same paired deals.');
 console.log('- Adaptive stages accumulate prior paired outcomes, widen intervals for between-batch disagreement, and require a fresh independent confirmation batch before stopping early.');
+if (adaptiveRefinementSamples > 0) console.log(`- Unresolved close decisions receive one ${adaptiveRefinementSamples}-sample paired batch restricted to their plausible-best candidates.`);
 console.log('- Phase and legal-move count set minimum budgets. Statistically equivalent leaders are reported as one plausible-best set.');
 console.log('- Recommendation confidence is independent from mistake-label confidence; unclear mistake labels abstain.');
 console.log('- Regret is the reference win-rate gap between its leading move and the tested analyzer selected move.');

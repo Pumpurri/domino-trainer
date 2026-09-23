@@ -11,8 +11,8 @@ import {
   seededRandom,
 } from '../app/domino-engine.ts';
 import {
-  ADAPTIVE_ANALYSIS_VERSION,
   DEFAULT_ADAPTIVE_STAGES,
+  adaptiveAnalysisVersion,
   pairedRatedMoveDifference,
   plausibleBestMoveKeys,
   runAdaptiveAnalysis,
@@ -143,11 +143,14 @@ function exactOracleKeys(game, maximumTiles = 15) {
   return outcomes.filter(({ utility }) => utility === best).map(({ key }) => key);
 }
 
-function runAnalysis(safeGame, budget, seedSalt) {
+function runAnalysis(safeGame, budget, seedSalt, rootCandidateKeys) {
   const particleCount = particleCountForBudget(budget);
   const beliefState = createBeliefState(safeGame, 0, particleCount, undefined, seedSalt);
   const started = performance.now();
-  const ranked = analyzeMoves(safeGame, particleCount, beliefState, undefined, { representativeLimit: budget });
+  const ranked = analyzeMoves(safeGame, particleCount, beliefState, undefined, {
+    representativeLimit: budget,
+    rootCandidateKeys,
+  });
   return { ranked, elapsedMs: performance.now() - started };
 }
 
@@ -160,6 +163,8 @@ async function runAdaptiveBenchmarkAnalysis(
   seedSalt,
   recommendationPracticalGap,
   mistakePolicy,
+  refinementSamples,
+  refinementMaximumGap,
 ) {
   const started = performance.now();
   const adaptive = await runAdaptiveAnalysis({
@@ -168,11 +173,14 @@ async function runAdaptiveBenchmarkAnalysis(
     phase,
     branching,
     recommendationPracticalGap,
+    refinementSamples,
+    refinementMaximumGap,
     mistakePolicy,
-    analyzeBatch: (batchSamples, stageIndex) => runAnalysis(
+    analyzeBatch: (batchSamples, stageIndex, candidateKeys) => runAnalysis(
       safeGame,
       batchSamples,
       `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
+      candidateKeys,
     ).ranked,
   });
   return { adaptive, ranked: adaptive.ranked, elapsedMs: performance.now() - started };
@@ -225,6 +233,8 @@ export async function evaluateReliabilityPosition(position, {
   adaptiveStages = DEFAULT_ADAPTIVE_STAGES,
   adaptiveRecommendationGap = 1,
   adaptiveMistakePolicy,
+  adaptiveRefinementSamples = 0,
+  adaptiveRefinementMaximumGap = 3,
   seed = 'mesa-quince-reliability-v1',
 } = {}) {
   const safeGame = informationSafeBenchmarkGame(position.game);
@@ -271,6 +281,8 @@ export async function evaluateReliabilityPosition(position, {
         `${seed}|${position.id}|adaptive|repeat-${repetition}`,
         adaptiveRecommendationGap,
         adaptiveMistakePolicy,
+        adaptiveRefinementSamples,
+        adaptiveRefinementMaximumGap,
       );
       adaptiveTrials.push(evaluatedTrial({
         repetition,
@@ -289,6 +301,8 @@ export async function evaluateReliabilityPosition(position, {
           stopReason: analysis.adaptive.stopReason,
           recommendationConfidence: analysis.adaptive.recommendationConfidence,
           recommendationKeys: analysis.adaptive.plausibleBestKeys,
+          refinementSamples: analysis.adaptive.refinementSamples,
+          refinementKeys: analysis.adaptive.refinementKeys,
           minimumSamples: analysis.adaptive.minimumSamples,
           mistakeConfidence: analysis.adaptive.choice?.mistakeConfidence ?? 'uncertain',
           mistakeAssessment: analysis.adaptive.choice?.assessment ?? 'uncertain',
@@ -327,8 +341,10 @@ export async function evaluateReliabilityPosition(position, {
     exactOracleKeys: exactKeys,
     budgets: byBudget,
     adaptive: includeAdaptive ? {
-      version: ADAPTIVE_ANALYSIS_VERSION,
+      version: adaptiveAnalysisVersion(adaptiveRefinementSamples),
       stages: [...adaptiveStages],
+      refinementSamples: adaptiveRefinementSamples,
+      refinementMaximumGap: adaptiveRefinementMaximumGap,
       trials: adaptiveTrials,
     } : null,
   };
@@ -463,6 +479,7 @@ function summarizeAdaptive(positionResults, seed, confidenceResamples) {
     stoppingStages,
     hardCapRate: rate('hard-cap', (trial) => trial.stopReason === 'hard-cap' ? 1 : 0),
     uncertainRate: rate('uncertain', (trial) => trial.recommendationConfidence === 'uncertain' ? 1 : 0),
+    refinementRate: rate('refinement', (trial) => trial.refinementSamples > 0 ? 1 : 0),
     recommendationSetSize: intervalForPositionMeans(relevant.map((position) => {
       const trials = trialsFor(position);
       return trials.reduce((sum, trial) => sum + (trial.recommendationKeys?.length ?? 1), 0) / trials.length;

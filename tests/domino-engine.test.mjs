@@ -574,4 +574,10 @@ test('multicore analysis shards merge to the same paired release evaluation', ()
     assert.equal(move.treeSearch.pairedBaseWins.length, 24);
     assert.equal(move.treeSearch.pairedBaseWeights.length, 24);
   });
+
+  const candidateOnly = analyzeMoves(game, 30, beliefs, undefined, {
+    representativeLimit: 12,
+    rootCandidateKeys: ['1-5:left', '8-9:right'],
+  });
+  assert.deepEqual(candidateOnly.map(moveKey).sort(), ['1-5:left', '8-9:right']);
 });

@@ -251,6 +251,7 @@ export type AnalysisOptions = {
   representativeLimit?: number;
   shardIndex?: number;
   shardCount?: number;
+  rootCandidateKeys?: readonly string[];
 };
 
 type WeightedSample = BeliefParticle;
@@ -2366,7 +2367,19 @@ function analyzeMovesForPlayer(
   styles?: OpponentStyleProfile[],
   options?: AnalysisOptions,
 ): RatedMove[] {
-  const moves = legalMovesFor(game.hands[perspective], game.chain);
+  const legalMoves = legalMovesFor(game.hands[perspective], game.chain);
+  if (!legalMoves.length) return [];
+  const requestedKeys = options?.rootCandidateKeys
+    ? new Set(options.rootCandidateKeys)
+    : null;
+  const moves = requestedKeys
+    ? legalMoves.filter((move) => requestedKeys.has(moveKey(move)))
+    : legalMoves;
+  if (requestedKeys && moves.length !== requestedKeys.size) {
+    const legalKeys = new Set(legalMoves.map(moveKey));
+    const missing = [...requestedKeys].filter((key) => !legalKeys.has(key));
+    throw new Error(`Root candidate moves are not legal: ${missing.join(', ')}.`);
+  }
   if (!moves.length) return [];
   const stateKey = `${perspective}|${game.round}|${game.events.length}|${game.chain.map((tile) => `${tile.id}:${tile.left}-${tile.right}`).join(',')}|${game.hands[perspective].map((tile) => tile.id).join(',')}`;
   const persistentParticles = currentBeliefParticles(game, perspective, beliefState);

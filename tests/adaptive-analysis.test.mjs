@@ -112,6 +112,34 @@ test('adaptive analysis spends its full budget and stays cautious on an unresolv
   assert.equal(classifyAdaptiveChoice(result.ranked, '1-3:left').verdict, 'close');
 });
 
+test('adaptive analysis refines only an unresolved close candidate set', async () => {
+  const calls = [];
+  const result = await runAdaptiveAnalysis({
+    stages: [4, 8, 12],
+    minimumSamples: 4,
+    playedKey: '1-3:left',
+    refinementSamples: 4,
+    refinementMaximumGap: 3,
+    analyzeBatch: (samples, stageIndex, candidateKeys) => {
+      calls.push({ samples, stageIndex, candidateKeys: candidateKeys ? [...candidateKeys] : null });
+      return candidateKeys ? decisiveBatch(samples) : ambiguousBatch(samples);
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { samples: 4, stageIndex: 0, candidateKeys: null },
+    { samples: 4, stageIndex: 1, candidateKeys: null },
+    { samples: 4, stageIndex: 2, candidateKeys: null },
+    { samples: 4, stageIndex: 3, candidateKeys: ['1-2:left', '1-3:left'] },
+  ]);
+  assert.equal(result.samplesUsed, 16);
+  assert.equal(result.refinementSamples, 4);
+  assert.deepEqual(result.refinementKeys, ['1-2:left', '1-3:left']);
+  assert.equal(result.ranked[0].tile.id, '1-2');
+  assert.equal(result.ranked[0].samples, 16);
+  assert.equal(result.stages.length, 4);
+});
+
 test('between-batch uncertainty widens a pooled interval when independent batches disagree', () => {
   const first = [
     ratedMove('1-2', [1, 1, 1, 1, 1, 1, 1, 1]),
@@ -127,6 +155,15 @@ test('between-batch uncertainty widens a pooled interval when independent batche
   assert.ok(difference.interval[0] < difference.pooledInterval[0]);
   assert.ok(difference.interval[1] > difference.pooledInterval[1]);
   assert.deepEqual(difference.batchGaps, [100, -100]);
+});
+
+test('clustered comparisons ignore candidate-only batches missing one compared move', () => {
+  const full = ambiguousBatch(8);
+  const candidateOnly = [ratedMove('1-2', Array(4).fill(1))];
+  const difference = clusteredRatedMoveDifference([full, candidateOnly], '1-2:left', '1-3:left');
+
+  assert.equal(difference.gap, 0);
+  assert.deepEqual(difference.batchGaps, [0]);
 });
 
 test('statistically equivalent leaders share one acceptable best-move set', () => {
