@@ -342,3 +342,11 @@ caffeinate -i npm run benchmark:sampler-ablation
 ```
 
 The run uses nine worker threads and an atomic per-position checkpoint at `outputs/sampler-ablation-v1-48.checkpoint`. Add `-- --resume` after an interruption.
+
+### Paired sampler-ablation result
+
+The 48-position run completed all 144 repetitions. One-shot and shared staged analysis had zero top, ranking, paired-outcome, weight, sample-count, or win-rate mismatches. Forced adaptive replay also matched its staged evidence exactly. Every targeted trial reached 2,000 samples, so early stopping made no decisions and caused no measured change.
+
+Independent stage sampling crossed the predeclared overall harm threshold through mean regret: 0.267 versus 0.211 for a shared particle sequence, a +0.056 difference. Within-one-point quality was 88.9% versus 90.3%, while repeat acceptability was 77.1% for both. The methods chose different moves in 39 of 144 trials. Shared sampling had lower reference regret in 20 trials, independent sampling in 19, and 105 were tied, showing that harm came from the magnitude of a few misses rather than a uniform advantage.
+
+The effect reversed by phase. In high-branching openings, independent sampling reached 94.4% within one point, 0.149 mean regret, and 87.5% repeat acceptability, compared with 88.9%, 0.215, and 75.0% for shared sampling. In wide middle positions, shared sampling reached 91.7%, 0.207, and 79.2%, compared with 83.3%, 0.386, and 66.7% for independent sampling. Confidence intervals remain broad with 24 positions per group, so this result rejects a global shared-pool replacement. It supports a benchmark-only phase-aware candidate: retain independent stage samples for openings, use a persistent disjoint particle sequence in the middle game, and leave late and blocked play unchanged. That candidate must be frozen before a new full-corpus development run and cannot be integrated from this diagnostic alone. See `benchmarks/sampler-ablation-v1-48.md`.
