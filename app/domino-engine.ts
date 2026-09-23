@@ -39,6 +39,7 @@ export type Game = {
 };
 export type Difficulty = 'casual' | 'strong';
 export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
+export type RolloutPolicy = 'current' | 'exhaustive-forecast' | 'mixed' | 'stochastic-top-two';
 export type StrategyContext = {
   phase: StrategicPhase;
   chainLength: number;
@@ -1639,7 +1640,7 @@ export function chooseInformationSafeMove(game: Game, moves: Move[]): Move {
     .sort((left, right) => right.forecast.score - left.forecast.score)[0].move;
 }
 
-function selectRolloutMove({
+function rankedRolloutMoves({
   hand,
   handSizes,
   legal,
@@ -1657,8 +1658,7 @@ function selectRolloutMove({
   context: StrategyContext;
   playedTiles: Tile[];
   style?: OpponentStyleProfile;
-}): Move {
-  if (legal.length === 1) return legal[0];
+}): Array<{ move: Move; score: number }> {
   const adjustedScores = styleAdjustedScores(legal, hand, voids, current, handSizes, context, style);
   const candidates = legal.length <= 3
     ? legal
@@ -1684,10 +1684,49 @@ function selectRolloutMove({
         styleScore: adjustedScores[legalIndex],
       };
     })
-    .sort((left, right) => (
-      right.forecast.score + (style ? right.styleScore * 0.28 : 0)
-      - left.forecast.score - (style ? left.styleScore * 0.28 : 0)
-    ))[0].move;
+    .map(({ move, forecast, styleScore }) => ({
+      move,
+      score: forecast.score + (style ? styleScore * 0.28 : 0),
+    }))
+    .sort((left, right) => right.score - left.score);
+}
+
+function selectRolloutMove(options: Parameters<typeof rankedRolloutMoves>[0]): Move {
+  if (options.legal.length === 1) return options.legal[0];
+  return rankedRolloutMoves(options)[0].move;
+}
+
+export function chooseRolloutPolicyMove(
+  game: Game,
+  moves: Move[],
+  policy: RolloutPolicy = 'current',
+  random: () => number = Math.random,
+): Move {
+  if (moves.length === 1) return moves[0];
+  if (policy === 'exhaustive-forecast') return chooseInformationSafeMove(game, moves);
+  if (policy === 'mixed') {
+    const draw = random();
+    if (draw < 0.6) return chooseRolloutPolicyMove(game, moves, 'current', random);
+    if (draw < 0.85) return chooseRolloutPolicyMove(game, moves, 'exhaustive-forecast', random);
+    return chooseCasualMove(game, moves);
+  }
+  const options = {
+    hand: game.hands[game.current],
+    handSizes: game.hands.map((hand) => hand.length),
+    legal: moves,
+    voids: game.voids,
+    current: game.current,
+    context: strategyContextForGame(game, game.current),
+    playedTiles: game.chain,
+  };
+  const ranked = rankedRolloutMoves(options);
+  if (policy === 'current') return ranked[0].move;
+  if (policy !== 'stochastic-top-two') throw new Error(`Unknown rollout policy: ${policy}.`);
+  const [best, second] = ranked;
+  if (!second) return best.move;
+  const scoreGap = Math.max(0, best.score - second.score);
+  const bestProbability = 0.65 + 0.3 * (1 - Math.exp(-scoreGap / 8));
+  return random() < bestProbability ? best.move : second.move;
 }
 
 function rolloutWinner(

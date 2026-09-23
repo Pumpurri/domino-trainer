@@ -392,3 +392,32 @@ The full 200-position development run completed all 600 trials. V6 failed four l
 The candidate changed 12.7% of middle-game recommendations, proving the new path was exercised. Those changes moved in the wrong direction: middle-game mean regret rose from 0.094 to 0.124 instead of improving by the required 0.03, and middle repeat acceptability fell from 90% to 88%. Overall repeat acceptability missed the 90% target by half a percentage point, and mean sample use increased by five.
 
 Within-one-point quality, overall regret noninferiority, mistake-label agreement, and false-accusation safety all passed. That is not enough to rescue the candidate because the preregistered middle-game benefit did not appear. The result rejects phase-aware persistent sampling and moves the next investigation to the deterministic rollout policy. The full evidence is stored in `benchmarks/adaptive-v6-development-200.json` and `benchmarks/adaptive-v6-development-200.md`.
+
+### Rollout-policy diagnostic protocol
+
+The next diagnostic tests the policy that completes simulated games after a root move. It does not change hidden-deal sampling, adaptive stopping, recommendation selection, Rosa, Tino, or the live coach. Four information-safe policies are compared:
+
+- `current` is the existing rollout: use the phase-aware heuristic to shortlist at most three moves, then choose with public three-turn forecasting.
+- `exhaustive-forecast` applies the public three-turn forecast to every legal move without heuristic shortlisting.
+- `mixed` chooses the current policy 60% of the time, exhaustive forecast 25%, and the immediate phase-aware heuristic 15%.
+- `stochastic-top-two` chooses between the two highest current-policy moves, favoring the leader more strongly as its score advantage grows.
+
+The fresh seed `mesa-quince-rollout-policy-v1` supplies 120 double-nine deals. Every deal is replayed for every three-policy combination, all six seat permutations, and all three starters, producing 72 rounds per deal and 8,640 total rounds. Each policy receives exactly 54 appearances per deal, balanced across seats and starting positions. Randomized choices use deterministic seeds. Policies can inspect only their own hand and public state.
+
+Confidence intervals resample complete deals. Results include round win rate, remaining pips, losing pips, blocked-game success, seat, starter, and strategic-phase slices. A candidate passes this diagnostic only if all of these locked checks pass:
+
+- Its paired overall win-rate difference from the current rollout is positive.
+- The lower 95% bound of that difference is no worse than minus one percentage point.
+- Its blocked-game win-rate estimate is no more than two percentage points worse.
+- Its average losing-pip total is no more than one pip worse.
+- No opening, middle, late, or likely-block conditional win-rate estimate is more than two percentage points worse.
+- It shows a strategic signal: at least a half-point overall win-rate gain or at least a 1.5-point gain in middle or late play.
+
+Passing selects a direction for a separately seeded analyzer experiment only. It cannot promote a rollout or coach. The opened V6 corpus is used only to produce a forensic report of its 19 changed trials and is not future release evidence.
+
+```sh
+npm run benchmark:v6:forensics
+caffeinate -i npm run benchmark:rollout-policies
+```
+
+The rollout run uses nine workers and checkpoints each completed deal under `outputs/rollout-policy-v1-120.checkpoint`. Add `-- --resume` after interruption.

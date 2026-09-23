@@ -20,13 +20,94 @@ import {
   informationSafeBenchmarkGame,
   summarizeReliability,
 } from '../scripts/analyzer-reliability-core.mjs';
-import { evaluateReliabilityParallel } from '../scripts/analyzer-reliability-parallel.mjs';
+import {
+  evaluatePositionsParallel,
+  evaluateReliabilityParallel,
+} from '../scripts/analyzer-reliability-parallel.mjs';
+import {
+  ROLLOUT_POLICIES,
+  ROLLOUT_POLICY_LINEUPS,
+  rolloutPolicyDevelopmentGate,
+  runRolloutPolicyDeal,
+  summarizeRolloutPolicyBenchmark,
+} from '../scripts/rollout-policy-core.mjs';
 
 test('matched schedule puts every strategy in every seat equally', () => {
   for (const strategy of STRATEGIES) {
     const seatCounts = [0, 1, 2].map((seat) => STRATEGY_LINEUPS.filter((lineup) => lineup[seat] === strategy).length);
     assert.deepEqual(seatCounts, [2, 2, 2]);
   }
+});
+
+test('rollout-policy schedule balances every policy across seats and omissions', () => {
+  assert.equal(ROLLOUT_POLICY_LINEUPS.length, 24);
+  for (const policy of ROLLOUT_POLICIES) {
+    assert.equal(ROLLOUT_POLICY_LINEUPS.filter((lineup) => lineup.includes(policy)).length, 18);
+    assert.deepEqual(
+      [0, 1, 2].map((seat) => ROLLOUT_POLICY_LINEUPS.filter((lineup) => lineup[seat] === policy).length),
+      [6, 6, 6],
+    );
+  }
+});
+
+test('one rollout-policy deal produces balanced phase-aware results', () => {
+  const result = runRolloutPolicyDeal({ dealIndex: 0, seed: 'rollout-policy-deal-test' });
+  assert.equal(result.rounds, 72);
+  for (const policy of ROLLOUT_POLICIES) {
+    const stats = result.strategies[policy];
+    assert.equal(stats.appearances, 54);
+    assert.deepEqual(stats.bySeat.map(({ trials }) => trials), [18, 18, 18]);
+    assert.deepEqual(stats.byStarter.map(({ trials }) => trials), [18, 18, 18]);
+    assert.equal(stats.whenStarting.trials, 18);
+    assert.equal(stats.whenNotStarting.trials, 36);
+    assert.ok(stats.decisions > 0);
+  }
+});
+
+test('rollout-policy summary and diagnostic gate use paired complete deals', () => {
+  const clusters = [0, 1].map((dealIndex) => runRolloutPolicyDeal({
+    dealIndex,
+    seed: 'rollout-policy-summary-test',
+  }));
+  const summary = summarizeRolloutPolicyBenchmark(clusters, {
+    seed: 'rollout-policy-summary-test',
+    confidenceResamples: 20,
+  });
+  assert.equal(summary.deals, 2);
+  assert.equal(summary.rounds, 144);
+  assert.deepEqual(Object.keys(summary.strategies), ROLLOUT_POLICIES);
+  assert.deepEqual(Object.keys(summary.comparisons), ROLLOUT_POLICIES.slice(1));
+  assert.ok(Object.values(summary.comparisons).every(({ gate }) => (
+    typeof gate.passed === 'boolean'
+  )));
+
+  const metric = (mean, low = mean, high = mean) => ({ mean, low, high });
+  const passing = {
+    winRateDifference: metric(0.01, -0.005, 0.025),
+    blockedWinRateDifference: metric(-0.01),
+    losingPipsDifference: metric(0.5),
+    phaseWinRateDifferences: Object.fromEntries(
+      ['opening', 'middle', 'late', 'block'].map((phase) => [phase, metric(phase === 'middle' ? 0.02 : 0)]),
+    ),
+  };
+  assert.equal(rolloutPolicyDevelopmentGate(passing).passed, true);
+  assert.equal(rolloutPolicyDevelopmentGate({
+    ...passing,
+    phaseWinRateDifferences: { ...passing.phaseWinRateDifferences, opening: metric(-0.021) },
+  }).passed, false);
+});
+
+test('parallel rollout-policy workers preserve deterministic deal results', async () => {
+  const positions = [0, 1];
+  const options = { seed: 'rollout-policy-parallel-test' };
+  const sequential = positions.map((dealIndex) => runRolloutPolicyDeal({ dealIndex, ...options }));
+  const parallel = await evaluatePositionsParallel({
+    positions,
+    options,
+    workerCount: 2,
+    workerUrl: new URL('../scripts/rollout-policy-worker.mjs', import.meta.url),
+  });
+  assert.deepEqual(parallel, sequential);
 });
 
 test('matched deals are deterministic and contain 30 dealt plus 25 sleeping tiles', () => {

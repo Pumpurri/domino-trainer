@@ -1,0 +1,1015 @@
+{
+  "generatedAt": "2026-09-23T23:44:24.978Z",
+  "summary": {
+    "source": "benchmarks/adaptive-v6-development-200.json",
+    "seed": "mesa-quince-adaptive-v6-development-v1",
+    "middleTrials": 150,
+    "changedTrials": 19,
+    "changedPositions": 12,
+    "improved": 9,
+    "harmed": 10,
+    "tied": 0,
+    "meanRegretChange": 0.23684210526315752,
+    "totalRegretChange": 4.499999999999993,
+    "byBranching": {
+      "2": {
+        "trials": 8,
+        "improved": 4,
+        "harmed": 4,
+        "tied": 0,
+        "meanRegretChange": 0.2749999999999999
+      },
+      "3": {
+        "trials": 6,
+        "improved": 5,
+        "harmed": 1,
+        "tied": 0,
+        "meanRegretChange": -0.9200000000000023
+      },
+      "4": {
+        "trials": 4,
+        "improved": 0,
+        "harmed": 4,
+        "tied": 0,
+        "meanRegretChange": 1.4800000000000004
+      },
+      "5": {
+        "trials": 1,
+        "improved": 0,
+        "harmed": 1,
+        "tied": 0,
+        "meanRegretChange": 1.9000000000000057
+      }
+    }
+  },
+  "changes": [
+    {
+      "positionId": "middle-07",
+      "repetition": 0,
+      "branching": 2,
+      "handSizes": [
+        7,
+        7,
+        6
+      ],
+      "eventCount": 10,
+      "referenceTopKey": "1-6:left",
+      "acceptableTopKeys": [
+        "1-6:left",
+        "2-4:right"
+      ],
+      "controlTopKey": "1-6:left",
+      "candidateTopKey": "2-4:right",
+      "controlRegret": 0,
+      "candidateRegret": 2.019999999999996,
+      "regretChange": 2.019999999999996,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left"
+      ],
+      "candidateStageLeaders": [
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "2-4:right"
+      ],
+      "controlRecommendationKeys": [
+        "1-6:left",
+        "2-4:right"
+      ],
+      "candidateRecommendationKeys": [
+        "1-6:left",
+        "2-4:right"
+      ]
+    },
+    {
+      "positionId": "middle-07",
+      "repetition": 2,
+      "branching": 2,
+      "handSizes": [
+        7,
+        7,
+        6
+      ],
+      "eventCount": 10,
+      "referenceTopKey": "1-6:left",
+      "acceptableTopKeys": [
+        "1-6:left",
+        "2-4:right"
+      ],
+      "controlTopKey": "2-4:right",
+      "candidateTopKey": "1-6:left",
+      "controlRegret": 2.019999999999996,
+      "candidateRegret": 0,
+      "regretChange": -2.019999999999996,
+      "outcome": "improved",
+      "controlWithinOnePoint": false,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "2-4:right",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "2-4:right"
+      ],
+      "candidateStageLeaders": [
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left",
+        "1-6:left"
+      ],
+      "controlRecommendationKeys": [
+        "1-6:left",
+        "2-4:right"
+      ],
+      "candidateRecommendationKeys": [
+        "1-6:left",
+        "2-4:right"
+      ]
+    },
+    {
+      "positionId": "middle-09",
+      "repetition": 0,
+      "branching": 3,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "1-8:left",
+      "acceptableTopKeys": [
+        "1-8:left",
+        "3-5:right"
+      ],
+      "controlTopKey": "3-5:right",
+      "candidateTopKey": "1-8:left",
+      "controlRegret": 1.2199999999999989,
+      "candidateRegret": 0,
+      "regretChange": -1.2199999999999989,
+      "outcome": "improved",
+      "controlWithinOnePoint": false,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "1-8:left",
+        "3-5:right",
+        "3-5:right",
+        "1-8:left",
+        "3-5:right"
+      ],
+      "candidateStageLeaders": [
+        "1-3:left",
+        "1-3:left",
+        "1-8:left",
+        "1-8:left",
+        "1-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "1-3:left",
+        "1-8:left",
+        "3-5:right"
+      ],
+      "candidateRecommendationKeys": [
+        "1-3:left",
+        "1-8:left",
+        "3-5:right"
+      ]
+    },
+    {
+      "positionId": "middle-09",
+      "repetition": 1,
+      "branching": 3,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "1-8:left",
+      "acceptableTopKeys": [
+        "1-8:left",
+        "3-5:right"
+      ],
+      "controlTopKey": "1-8:left",
+      "candidateTopKey": "3-5:right",
+      "controlRegret": 0,
+      "candidateRegret": 1.2199999999999989,
+      "regretChange": 1.2199999999999989,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "1-8:left",
+        "1-8:left",
+        "1-8:left",
+        "1-8:left",
+        "1-8:left"
+      ],
+      "candidateStageLeaders": [
+        "3-5:right",
+        "3-5:right",
+        "3-5:right",
+        "3-5:right",
+        "3-5:right"
+      ],
+      "controlRecommendationKeys": [
+        "1-3:left",
+        "1-8:left",
+        "3-5:right"
+      ],
+      "candidateRecommendationKeys": [
+        "1-8:left",
+        "3-5:right"
+      ]
+    },
+    {
+      "positionId": "middle-12",
+      "repetition": 0,
+      "branching": 4,
+      "handSizes": [
+        8,
+        8,
+        7
+      ],
+      "eventCount": 7,
+      "referenceTopKey": "2-9:left",
+      "acceptableTopKeys": [
+        "2-8:left",
+        "2-9:left"
+      ],
+      "controlTopKey": "2-9:left",
+      "candidateTopKey": "2-8:left",
+      "controlRegret": 0,
+      "candidateRegret": 0.13999999999999702,
+      "regretChange": 0.13999999999999702,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "2-9:left",
+        "2-9:left",
+        "2-8:left",
+        "2-8:left",
+        "2-9:left"
+      ],
+      "candidateStageLeaders": [
+        "2-9:left",
+        "2-8:left",
+        "2-8:left",
+        "2-8:left",
+        "2-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "2-6:left",
+        "2-8:left",
+        "2-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "2-8:left",
+        "2-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-12",
+      "repetition": 1,
+      "branching": 4,
+      "handSizes": [
+        8,
+        8,
+        7
+      ],
+      "eventCount": 7,
+      "referenceTopKey": "2-9:left",
+      "acceptableTopKeys": [
+        "2-8:left",
+        "2-9:left"
+      ],
+      "controlTopKey": "2-9:left",
+      "candidateTopKey": "2-8:left",
+      "controlRegret": 0,
+      "candidateRegret": 0.13999999999999702,
+      "regretChange": 0.13999999999999702,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "2-6:left",
+        "2-8:left",
+        "2-8:left",
+        "2-9:left",
+        "2-9:left"
+      ],
+      "candidateStageLeaders": [
+        "2-8:left",
+        "2-8:left",
+        "2-8:left",
+        "2-8:left",
+        "2-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "2-6:left",
+        "2-8:left",
+        "2-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "2-6:left",
+        "2-8:left",
+        "2-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-23",
+      "repetition": 0,
+      "branching": 4,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "4-9:left",
+      "acceptableTopKeys": [
+        "4-8:left",
+        "4-9:left"
+      ],
+      "controlTopKey": "4-9:left",
+      "candidateTopKey": "4-8:left",
+      "controlRegret": 0,
+      "candidateRegret": 0.7199999999999989,
+      "regretChange": 0.7199999999999989,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "4-8:left",
+        "4-8:left",
+        "4-8:left",
+        "4-8:left",
+        "4-9:left"
+      ],
+      "candidateStageLeaders": [
+        "4-9:left",
+        "4-9:left",
+        "4-9:left",
+        "4-8:left",
+        "4-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "1-8:right",
+        "1-9:right",
+        "4-8:left",
+        "4-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "1-9:right",
+        "4-8:left",
+        "4-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-23",
+      "repetition": 2,
+      "branching": 4,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "4-9:left",
+      "acceptableTopKeys": [
+        "4-8:left",
+        "4-9:left"
+      ],
+      "controlTopKey": "4-9:left",
+      "candidateTopKey": "1-8:right",
+      "controlRegret": 0,
+      "candidateRegret": 4.920000000000009,
+      "regretChange": 4.920000000000009,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "4-8:left",
+        "4-9:left",
+        "4-8:left",
+        "4-8:left",
+        "4-9:left"
+      ],
+      "candidateStageLeaders": [
+        "4-8:left",
+        "4-8:left",
+        "4-9:left",
+        "4-9:left",
+        "1-8:right"
+      ],
+      "controlRecommendationKeys": [
+        "1-8:right",
+        "4-8:left",
+        "4-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "1-8:right",
+        "1-9:right",
+        "4-8:left",
+        "4-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-24",
+      "repetition": 1,
+      "branching": 2,
+      "handSizes": [
+        6,
+        6,
+        6
+      ],
+      "eventCount": 12,
+      "referenceTopKey": "3-5:left",
+      "acceptableTopKeys": [
+        "3-5:left"
+      ],
+      "controlTopKey": "3-5:left",
+      "candidateTopKey": "2-5:left",
+      "controlRegret": 0,
+      "candidateRegret": 3.1600000000000037,
+      "regretChange": 3.1600000000000037,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "3-5:left",
+        "3-5:left",
+        "3-5:left",
+        "3-5:left",
+        "3-5:left"
+      ],
+      "candidateStageLeaders": [
+        "3-5:left",
+        "2-5:left",
+        "2-5:left",
+        "2-5:left",
+        "2-5:left"
+      ],
+      "controlRecommendationKeys": [
+        "3-5:left"
+      ],
+      "candidateRecommendationKeys": [
+        "2-5:left",
+        "3-5:left"
+      ]
+    },
+    {
+      "positionId": "middle-28",
+      "repetition": 0,
+      "branching": 2,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "1-2:left",
+      "acceptableTopKeys": [
+        "0-6:right",
+        "1-2:left"
+      ],
+      "controlTopKey": "0-6:right",
+      "candidateTopKey": "1-2:left",
+      "controlRegret": 0.740000000000002,
+      "candidateRegret": 0,
+      "regretChange": -0.740000000000002,
+      "outcome": "improved",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "0-6:right",
+        "1-2:left",
+        "0-6:right",
+        "0-6:right",
+        "0-6:right"
+      ],
+      "candidateStageLeaders": [
+        "1-2:left",
+        "1-2:left",
+        "1-2:left",
+        "1-2:left",
+        "1-2:left"
+      ],
+      "controlRecommendationKeys": [
+        "0-6:right",
+        "1-2:left"
+      ],
+      "candidateRecommendationKeys": [
+        "0-6:right",
+        "1-2:left"
+      ]
+    },
+    {
+      "positionId": "middle-28",
+      "repetition": 2,
+      "branching": 2,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "1-2:left",
+      "acceptableTopKeys": [
+        "0-6:right",
+        "1-2:left"
+      ],
+      "controlTopKey": "0-6:right",
+      "candidateTopKey": "1-2:left",
+      "controlRegret": 0.740000000000002,
+      "candidateRegret": 0,
+      "regretChange": -0.740000000000002,
+      "outcome": "improved",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "1-2:left",
+        "1-2:left",
+        "1-2:left",
+        "0-6:right",
+        "0-6:right"
+      ],
+      "candidateStageLeaders": [
+        "0-6:right",
+        "0-6:right",
+        "0-6:right",
+        "0-6:right",
+        "1-2:left"
+      ],
+      "controlRecommendationKeys": [
+        "0-6:right",
+        "1-2:left"
+      ],
+      "candidateRecommendationKeys": [
+        "0-6:right",
+        "1-2:left"
+      ]
+    },
+    {
+      "positionId": "middle-29",
+      "repetition": 0,
+      "branching": 2,
+      "handSizes": [
+        6,
+        6,
+        6
+      ],
+      "eventCount": 12,
+      "referenceTopKey": "2-3:left",
+      "acceptableTopKeys": [
+        "0-6:right",
+        "2-3:left"
+      ],
+      "controlTopKey": "2-3:left",
+      "candidateTopKey": "0-6:right",
+      "controlRegret": 0,
+      "candidateRegret": 0.5199999999999996,
+      "regretChange": 0.5199999999999996,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "0-6:right",
+        "2-3:left",
+        "0-6:right",
+        "2-3:left",
+        "2-3:left"
+      ],
+      "candidateStageLeaders": [
+        "2-3:left",
+        "2-3:left",
+        "0-6:right",
+        "0-6:right",
+        "0-6:right"
+      ],
+      "controlRecommendationKeys": [
+        "0-6:right",
+        "2-3:left"
+      ],
+      "candidateRecommendationKeys": [
+        "0-6:right",
+        "2-3:left"
+      ]
+    },
+    {
+      "positionId": "middle-30",
+      "repetition": 0,
+      "branching": 3,
+      "handSizes": [
+        5,
+        6,
+        5
+      ],
+      "eventCount": 15,
+      "referenceTopKey": "7-8:left",
+      "acceptableTopKeys": [
+        "7-8:left",
+        "7-9:left"
+      ],
+      "controlTopKey": "7-9:left",
+      "candidateTopKey": "7-8:left",
+      "controlRegret": 0.5800000000000054,
+      "candidateRegret": 0,
+      "regretChange": -0.5800000000000054,
+      "outcome": "improved",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "7-8:left",
+        "7-9:left",
+        "7-9:left",
+        "7-9:left",
+        "7-9:left"
+      ],
+      "candidateStageLeaders": [
+        "7-8:left",
+        "7-8:left",
+        "7-8:left",
+        "7-8:left",
+        "7-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "7-8:left",
+        "7-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "7-8:left",
+        "7-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-30",
+      "repetition": 1,
+      "branching": 3,
+      "handSizes": [
+        5,
+        6,
+        5
+      ],
+      "eventCount": 15,
+      "referenceTopKey": "7-8:left",
+      "acceptableTopKeys": [
+        "7-8:left",
+        "7-9:left"
+      ],
+      "controlTopKey": "7-9:left",
+      "candidateTopKey": "7-8:left",
+      "controlRegret": 0.5800000000000054,
+      "candidateRegret": 0,
+      "regretChange": -0.5800000000000054,
+      "outcome": "improved",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "7-8:left",
+        "7-9:left",
+        "7-8:left",
+        "7-8:left",
+        "7-9:left"
+      ],
+      "candidateStageLeaders": [
+        "7-8:left",
+        "7-9:left",
+        "7-8:left",
+        "7-8:left",
+        "7-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "7-8:left",
+        "7-9:left"
+      ],
+      "candidateRecommendationKeys": [
+        "7-8:left",
+        "7-9:left"
+      ]
+    },
+    {
+      "positionId": "middle-37",
+      "repetition": 2,
+      "branching": 5,
+      "handSizes": [
+        8,
+        8,
+        7
+      ],
+      "eventCount": 7,
+      "referenceTopKey": "4-7:left",
+      "acceptableTopKeys": [
+        "0-7:left",
+        "1-7:left",
+        "3-4:right",
+        "3-6:right",
+        "4-7:left"
+      ],
+      "controlTopKey": "4-7:left",
+      "candidateTopKey": "3-6:right",
+      "controlRegret": 0,
+      "candidateRegret": 1.9000000000000057,
+      "regretChange": 1.9000000000000057,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "0-7:left",
+        "3-6:right",
+        "4-7:left",
+        "4-7:left",
+        "4-7:left"
+      ],
+      "candidateStageLeaders": [
+        "4-7:left",
+        "4-7:left",
+        "4-7:left",
+        "4-7:left",
+        "3-6:right"
+      ],
+      "controlRecommendationKeys": [
+        "0-7:left",
+        "1-7:left",
+        "3-4:right",
+        "3-6:right",
+        "4-7:left"
+      ],
+      "candidateRecommendationKeys": [
+        "0-7:left",
+        "1-7:left",
+        "3-4:right",
+        "3-6:right",
+        "4-7:left"
+      ]
+    },
+    {
+      "positionId": "middle-42",
+      "repetition": 2,
+      "branching": 3,
+      "handSizes": [
+        7,
+        6,
+        6
+      ],
+      "eventCount": 11,
+      "referenceTopKey": "7-9:right",
+      "acceptableTopKeys": [
+        "7-9:right"
+      ],
+      "controlTopKey": "8-9:right",
+      "candidateTopKey": "7-9:right",
+      "controlRegret": 2.5799999999999983,
+      "candidateRegret": 0,
+      "regretChange": -2.5799999999999983,
+      "outcome": "improved",
+      "controlWithinOnePoint": false,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "8-9:right",
+        "8-9:right",
+        "8-9:right",
+        "7-9:right",
+        "8-9:right"
+      ],
+      "candidateStageLeaders": [
+        "7-9:right",
+        "7-9:right",
+        "7-9:right",
+        "7-9:right",
+        "7-9:right"
+      ],
+      "controlRecommendationKeys": [
+        "7-9:right",
+        "8-9:right"
+      ],
+      "candidateRecommendationKeys": [
+        "7-9:right"
+      ]
+    },
+    {
+      "positionId": "middle-44",
+      "repetition": 0,
+      "branching": 2,
+      "handSizes": [
+        8,
+        8,
+        7
+      ],
+      "eventCount": 7,
+      "referenceTopKey": "3-8:left",
+      "acceptableTopKeys": [
+        "3-4:left",
+        "3-8:left"
+      ],
+      "controlTopKey": "3-4:left",
+      "candidateTopKey": "3-8:left",
+      "controlRegret": 1.4399999999999977,
+      "candidateRegret": 0,
+      "regretChange": -1.4399999999999977,
+      "outcome": "improved",
+      "controlWithinOnePoint": false,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "3-8:left",
+        "3-8:left",
+        "3-4:left",
+        "3-4:left",
+        "3-4:left"
+      ],
+      "candidateStageLeaders": [
+        "3-8:left",
+        "3-4:left",
+        "3-4:left",
+        "3-8:left",
+        "3-8:left"
+      ],
+      "controlRecommendationKeys": [
+        "3-4:left",
+        "3-8:left"
+      ],
+      "candidateRecommendationKeys": [
+        "3-4:left",
+        "3-8:left"
+      ]
+    },
+    {
+      "positionId": "middle-44",
+      "repetition": 1,
+      "branching": 2,
+      "handSizes": [
+        8,
+        8,
+        7
+      ],
+      "eventCount": 7,
+      "referenceTopKey": "3-8:left",
+      "acceptableTopKeys": [
+        "3-4:left",
+        "3-8:left"
+      ],
+      "controlTopKey": "3-8:left",
+      "candidateTopKey": "3-4:left",
+      "controlRegret": 0,
+      "candidateRegret": 1.4399999999999977,
+      "regretChange": 1.4399999999999977,
+      "outcome": "harmed",
+      "controlWithinOnePoint": true,
+      "candidateWithinOnePoint": false,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "3-4:left",
+        "3-8:left",
+        "3-8:left",
+        "3-8:left",
+        "3-8:left"
+      ],
+      "candidateStageLeaders": [
+        "3-8:left",
+        "3-8:left",
+        "3-4:left",
+        "3-4:left",
+        "3-4:left"
+      ],
+      "controlRecommendationKeys": [
+        "3-4:left",
+        "3-8:left"
+      ],
+      "candidateRecommendationKeys": [
+        "3-4:left",
+        "3-8:left"
+      ]
+    },
+    {
+      "positionId": "middle-46",
+      "repetition": 2,
+      "branching": 3,
+      "handSizes": [
+        7,
+        7,
+        7
+      ],
+      "eventCount": 9,
+      "referenceTopKey": "3-5:left",
+      "acceptableTopKeys": [
+        "2-8:right",
+        "3-5:left"
+      ],
+      "controlTopKey": "2-8:right",
+      "candidateTopKey": "3-5:left",
+      "controlRegret": 1.7800000000000047,
+      "candidateRegret": 0,
+      "regretChange": -1.7800000000000047,
+      "outcome": "improved",
+      "controlWithinOnePoint": false,
+      "candidateWithinOnePoint": true,
+      "controlSamples": 2000,
+      "candidateSamples": 2000,
+      "controlStopReason": "hard-cap",
+      "candidateStopReason": "hard-cap",
+      "controlStageLeaders": [
+        "3-5:left",
+        "2-8:right",
+        "2-8:right",
+        "3-5:left",
+        "2-8:right"
+      ],
+      "candidateStageLeaders": [
+        "3-5:left",
+        "3-5:left",
+        "3-5:left",
+        "3-5:left",
+        "3-5:left"
+      ],
+      "controlRecommendationKeys": [
+        "1-2:right",
+        "2-8:right",
+        "3-5:left"
+      ],
+      "candidateRecommendationKeys": [
+        "2-8:right",
+        "3-5:left"
+      ]
+    }
+  ]
+}

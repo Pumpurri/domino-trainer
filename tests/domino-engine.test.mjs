@@ -8,6 +8,7 @@ import {
   buildRoundReview,
   chooseCasualMove,
   chooseInformationSafeMove,
+  chooseRolloutPolicyMove,
   createBeliefState,
   createDecisionRecord,
   decisionGameFromRecord,
@@ -64,6 +65,30 @@ test('legal moves are oriented correctly on both ends', () => {
   const right = moves.find((move) => move.tile.id === '8-9');
   assert.deepEqual({ side: left.side, newLeft: left.newLeft, newRight: left.newRight }, { side: 'left', newLeft: 5, newRight: 9 });
   assert.deepEqual({ side: right.side, newLeft: right.newLeft, newRight: right.newRight }, { side: 'right', newLeft: 1, newRight: 8 });
+});
+
+test('rollout policy candidates are deterministic and cannot inspect hidden opponent tiles', () => {
+  const game = playingGame();
+  const alternate = {
+    ...game,
+    hands: [game.hands[0], [...game.hands[2]], [...game.hands[1]]],
+  };
+  const policies = ['current', 'exhaustive-forecast', 'mixed', 'stochastic-top-two'];
+  for (const policy of policies) {
+    const first = chooseRolloutPolicyMove(
+      game,
+      legalMovesFor(game.hands[0], game.chain),
+      policy,
+      seededRandom(`rollout-policy-test|${policy}`),
+    );
+    const second = chooseRolloutPolicyMove(
+      alternate,
+      legalMovesFor(alternate.hands[0], alternate.chain),
+      policy,
+      seededRandom(`rollout-policy-test|${policy}`),
+    );
+    assert.equal(moveKey(first), moveKey(second), policy);
+  }
 });
 
 test('a pass records both open values as certain voids', () => {

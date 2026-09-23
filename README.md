@@ -32,6 +32,8 @@ The V4 candidate-only refinement, V5 robust-selection, and V6 phase-aware sampli
 
 The completed paired sampler-ablation found no aggregation defect and no early-stopping effect on difficult positions. It found opposite sampling effects by phase: independent stage samples performed better in high-branching openings, while a persistent shared particle sequence performed better in wide middle-game decisions. No global sampling change or live-coach change was made.
 
+The current development work now benchmarks the deterministic rollout itself. A matched 8,640-round diagnostic compares the existing shortlist-plus-forecast policy with exhaustive public forecasting, a controlled policy mixture, and a seeded top-two policy. This experiment changes no product behavior and cannot promote a policy without a later analyzer study.
+
 ## Run locally
 
 ```sh
