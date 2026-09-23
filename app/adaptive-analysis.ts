@@ -84,7 +84,7 @@ export type AdaptiveStageResult = {
   mistakeConfidence: AdaptiveConfidence | null;
 };
 
-export type AdaptiveAnalysisResult = {
+export type AdaptiveAnalysisSnapshot = {
   ranked: RatedMove[];
   samplesUsed: number;
   stoppedAt: number;
@@ -92,10 +92,14 @@ export type AdaptiveAnalysisResult = {
   stopReason: AdaptiveStopReason;
   recommendationConfidence: AdaptiveRecommendationConfidence;
   plausibleBestKeys: string[];
-  refinementSamples: number;
-  refinementKeys: string[];
   stages: AdaptiveStageResult[];
   choice: AdaptiveChoiceAssessment | null;
+};
+
+export type AdaptiveAnalysisResult = AdaptiveAnalysisSnapshot & {
+  refinementSamples: number;
+  refinementKeys: string[];
+  preRefinement: AdaptiveAnalysisSnapshot | null;
 };
 
 export type AdaptiveChoiceOptions = {
@@ -556,6 +560,7 @@ export async function runAdaptiveAnalysis({
         plausibleBestKeys: stage.plausibleBestKeys,
         refinementSamples: 0,
         refinementKeys: [],
+        preRefinement: null,
         stages: history,
         choice: playedKey ? classifyAdaptiveChoice(ranked, playedKey, {
           batches,
@@ -567,6 +572,23 @@ export async function runAdaptiveAnalysis({
   }
 
   let finalStage = history.at(-1)!;
+  const preRefinement: AdaptiveAnalysisSnapshot | null = refinementSamples > 0
+    ? {
+      ranked,
+      samplesUsed: finalStage.targetSamples,
+      stoppedAt: finalStage.targetSamples,
+      minimumSamples,
+      stopReason: 'hard-cap',
+      recommendationConfidence: 'uncertain',
+      plausibleBestKeys: [...finalStage.plausibleBestKeys],
+      stages: [...history],
+      choice: playedKey ? classifyAdaptiveChoice(ranked, playedKey, {
+        batches,
+        recommendationPracticalGap,
+        mistakePolicy,
+      }) : null,
+    }
+    : null;
   let refinementKeys: string[] = [];
   if (
     refinementSamples > 0
@@ -606,6 +628,7 @@ export async function runAdaptiveAnalysis({
     plausibleBestKeys: finalStage.plausibleBestKeys,
     refinementSamples: refinementKeys.length ? refinementSamples : 0,
     refinementKeys,
+    preRefinement,
     stages: history,
     choice: playedKey ? classifyAdaptiveChoice(ranked, playedKey, {
       batches,

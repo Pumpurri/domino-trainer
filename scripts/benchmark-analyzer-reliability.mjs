@@ -72,20 +72,22 @@ function metricRow(label, row) {
   return `${label} | ${percent(row.exactTopAgreement)} | ${percent(row.topAgreement)} | ${percent(row.withinOnePoint)} | ${points(row.meanRegret)} | ${percent(row.mistakeLabelAgreement)} | ${percent(row.falsePositiveMistakes)} | ${percent(row.falseNegativeMistakes)} | ${percent(row.mistakeAbstentionRate)} | ${percent(row.decidedMistakeAccuracy)} | ${percent(row.repeatAcceptability)} | ${percent(row.recommendationSetStability)} | ${Math.round(row.runtimeMs.mean)} / ${Math.round(row.runtimeMs.p95)} ms`;
 }
 
-function printTable(title, fixed, adaptive, budgets) {
+function printTable(title, fixed, adaptive, budgets, adaptiveControl) {
   console.log(`\n${title}`);
   console.log('Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time');
   console.log('--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---');
   budgets.forEach((budget) => console.log(metricRow(`Fixed ${budget}`, fixed[budget])));
-  if (adaptive?.trials) console.log(metricRow('Adaptive', adaptive));
+  if (adaptiveControl?.trials) console.log(metricRow('Adaptive control', adaptiveControl));
+  if (adaptive?.trials) console.log(metricRow(adaptiveControl ? 'Adaptive refined' : 'Adaptive', adaptive));
 }
 
-function markdownTable(fixed, adaptive, budgets) {
+function markdownTable(fixed, adaptive, budgets, adaptiveControl) {
   return [
     '| Analyzer | Exact top | Acceptable top | Within 1 point | Mean regret | Mistake-label agreement | False positives | False negatives | Abstained labels | Decided-label accuracy | Repeat acceptable | Best-set stable | Mean / p95 time |',
     '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
     ...budgets.map((budget) => `| ${metricRow(`Fixed ${budget}`, fixed[budget])} |`),
-    ...(adaptive?.trials ? [`| ${metricRow('Adaptive', adaptive)} |`] : []),
+    ...(adaptiveControl?.trials ? [`| ${metricRow('Adaptive control', adaptiveControl)} |`] : []),
+    ...(adaptive?.trials ? [`| ${metricRow(adaptiveControl ? 'Adaptive refined' : 'Adaptive', adaptive)} |`] : []),
   ].join('\n');
 }
 
@@ -114,11 +116,24 @@ function renderReport({ config, summary, budgets, adaptiveGate }) {
   ));
   const gateRows = Object.entries(adaptiveGate.checks).map(([check, passed]) => `| ${check} | ${passed ? 'PASS' : 'FAIL'} |`);
   const phaseSections = RELIABILITY_PHASES.map((phase) => (
-    `### ${phase}\n\n${markdownTable(summary.byPhase[phase], summary.adaptiveByPhase[phase], budgets)}`
+    `### ${phase}\n\n${markdownTable(
+      summary.byPhase[phase],
+      summary.adaptiveByPhase[phase],
+      budgets,
+      summary.adaptiveControlByPhase?.[phase],
+    )}`
   ));
   const branchingSections = RELIABILITY_BRANCHING_BANDS
     .filter((band) => summary.branchingCounts[band])
-    .map((band) => `### ${band}\n\n${markdownTable(summary.byBranching[band], summary.adaptiveByBranching[band], budgets)}`);
+    .map((band) => `### ${band}\n\n${markdownTable(
+      summary.byBranching[band],
+      summary.adaptiveByBranching[band],
+      budgets,
+      summary.adaptiveControlByBranching?.[band],
+    )}`);
+  const pairedControlComparison = summary.adaptiveControl
+    ? `\n\nThe V3 control and refined candidate share the same reference, fixed-budget results, and pre-refinement adaptive stages. The control is captured immediately before candidate-only refinement, so this comparison adds no duplicate simulations. Timing is reported separately because shared execution changes timing boundaries.`
+    : '';
   return `# Mesa Quince adaptive analyzer reliability study
 
 Generated: ${new Date().toISOString()}
@@ -130,6 +145,7 @@ Generated: ${new Date().toISOString()}
 - Fixed budgets: ${budgets.join(', ')}
 - Adaptive stages: ${config.adaptiveStages.join(', ')}
 - Candidate-only refinement: ${config.adaptiveRefinementSamples ? `${config.adaptiveRefinementSamples} samples when the unresolved top-set gap is at most ${config.adaptiveRefinementMaximumGap} points` : 'disabled'}
+- Paired pre-refinement control: ${config.captureAdaptiveControl ? 'captured from the same run' : 'not requested'}
 - Recommendation equivalence gap: ${config.adaptiveRecommendationGap} point(s)
 - Mistake practical gap: ${config.adaptiveMistakePolicy.practicalGap} point(s)
 - Mistake minimum estimated loss: ${config.adaptiveMistakePolicy.minimumGap} point(s)
@@ -148,11 +164,11 @@ The adaptive analyzer **${adaptiveGate.passed ? 'passed' : 'failed'} the release
 
 The sampler allocated more computation to harder decisions: reference-unclear positions used ${closeAllocation.toFixed(2)} times as many samples as reference-clear positions. Its median stopping budget was ${summary.adaptive.samplesUsed.p50}, ${(summary.adaptive.uncertainRate.mean * 100).toFixed(1)}% of recommendations ended uncertain, and ${(summary.adaptive.mistakeAbstentionRate.mean * 100).toFixed(1)}% of coaching labels abstained. Failed release checks: ${failedChecks.length ? failedChecks.join(', ') : 'none'}.
 
-This adaptive sampler widens uncertainty when independent batches disagree, requires a fresh confirmation batch before early stopping, delays decisions according to phase and legal-move count, and treats statistically equivalent moves as one plausible-best set. Recommendation confidence and mistake confidence are separate, so the coach can abstain from a mistake label even when it still offers a tentative move.
+This adaptive sampler widens uncertainty when independent batches disagree, requires a fresh confirmation batch before early stopping, delays decisions according to phase and legal-move count, and treats statistically equivalent moves as one plausible-best set. Recommendation confidence and mistake confidence are separate, so the coach can abstain from a mistake label even when it still offers a tentative move.${pairedControlComparison}
 
 ## Overall results
 
-${markdownTable(summary.overall, summary.adaptive, budgets)}
+${markdownTable(summary.overall, summary.adaptive, budgets, summary.adaptiveControl)}
 
 ## Adaptive computation
 
@@ -294,6 +310,7 @@ const config = {
   ...(adaptiveRefinementSamples > 0 ? {
     adaptiveRefinementSamples,
     adaptiveRefinementMaximumGap,
+    captureAdaptiveControl: true,
   } : {}),
 };
 
@@ -347,12 +364,13 @@ const summary = summarizeReliability(results, { budgets, seed, confidenceResampl
 
 console.log(`\nCORPUS\n${summary.positions} positions | ${RELIABILITY_PHASES.map((phase) => `${phase} ${summary.phaseCounts[phase]}`).join(' | ')}`);
 console.log(`Reference marked ${summary.reference.clearRecommendations}/${summary.positions} recommendations statistically clear.`);
-printTable('OVERALL RELIABILITY', summary.overall, summary.adaptive, budgets);
+printTable('OVERALL RELIABILITY', summary.overall, summary.adaptive, budgets, summary.adaptiveControl);
 RELIABILITY_PHASES.forEach((phase) => printTable(
   `${phase.toUpperCase()} RELIABILITY`,
   summary.byPhase[phase],
   summary.adaptiveByPhase[phase],
   budgets,
+  summary.adaptiveControlByPhase?.[phase],
 ));
 RELIABILITY_BRANCHING_BANDS.forEach((band) => {
   if (summary.branchingCounts[band]) printTable(
@@ -360,6 +378,7 @@ RELIABILITY_BRANCHING_BANDS.forEach((band) => {
     summary.byBranching[band],
     summary.adaptiveByBranching[band],
     budgets,
+    summary.adaptiveControlByBranching?.[band],
   );
 });
 
@@ -410,7 +429,10 @@ console.log('\nNOTES');
 console.log('- Each phase contributes the same number of positions. Confidence intervals resample complete positions, not individual repeated runs.');
 console.log('- Each fixed run, adaptive batch, and reference uses independently seeded plausible hidden deals consistent with public evidence. Every legal move within one batch receives the same paired deals.');
 console.log('- Adaptive stages accumulate prior paired outcomes, widen intervals for between-batch disagreement, and require a fresh independent confirmation batch before stopping early.');
-if (adaptiveRefinementSamples > 0) console.log(`- Unresolved close decisions receive one ${adaptiveRefinementSamples}-sample paired batch restricted to their plausible-best candidates.`);
+if (adaptiveRefinementSamples > 0) {
+  console.log(`- Unresolved close decisions receive one ${adaptiveRefinementSamples}-sample paired batch restricted to their plausible-best candidates.`);
+  console.log('- The reference, fixed budgets, and ordinary adaptive stages run once. The pre-refinement V3 control is snapshotted before the V4 batch.');
+}
 console.log('- Phase and legal-move count set minimum budgets. Statistically equivalent leaders are reported as one plausible-best set.');
 console.log('- Recommendation confidence is independent from mistake-label confidence; unclear mistake labels abstain.');
 console.log('- Regret is the reference win-rate gap between its leading move and the tested analyzer selected move.');

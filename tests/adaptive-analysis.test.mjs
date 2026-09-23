@@ -135,6 +135,14 @@ test('adaptive analysis refines only an unresolved close candidate set', async (
   assert.equal(result.samplesUsed, 16);
   assert.equal(result.refinementSamples, 4);
   assert.deepEqual(result.refinementKeys, ['1-2:left', '1-3:left']);
+  assert.ok(result.preRefinement);
+  assert.equal(result.preRefinement.samplesUsed, 12);
+  assert.equal(result.preRefinement.stoppedAt, 12);
+  assert.equal(result.preRefinement.stopReason, 'hard-cap');
+  assert.equal(result.preRefinement.recommendationConfidence, 'uncertain');
+  assert.deepEqual(result.preRefinement.plausibleBestKeys, ['1-2:left', '1-3:left']);
+  assert.equal(result.preRefinement.stages.length, 3);
+  assert.equal(result.preRefinement.ranked[0].samples, 12);
   assert.equal(result.ranked[0].tile.id, '1-2');
   assert.equal(result.ranked[0].samples, 16);
   assert.equal(result.stages.length, 4);

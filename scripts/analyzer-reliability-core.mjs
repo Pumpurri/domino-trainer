@@ -167,6 +167,7 @@ async function runAdaptiveBenchmarkAnalysis(
   refinementMaximumGap,
 ) {
   const started = performance.now();
+  let preRefinementElapsedMs = 0;
   const adaptive = await runAdaptiveAnalysis({
     stages,
     playedKey,
@@ -176,14 +177,45 @@ async function runAdaptiveBenchmarkAnalysis(
     refinementSamples,
     refinementMaximumGap,
     mistakePolicy,
-    analyzeBatch: (batchSamples, stageIndex, candidateKeys) => runAnalysis(
-      safeGame,
-      batchSamples,
-      `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
-      candidateKeys,
-    ).ranked,
+    analyzeBatch: (batchSamples, stageIndex, candidateKeys) => {
+      const batch = runAnalysis(
+        safeGame,
+        batchSamples,
+        `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
+        candidateKeys,
+      );
+      if (!candidateKeys) preRefinementElapsedMs += batch.elapsedMs;
+      return batch.ranked;
+    },
   });
-  return { adaptive, ranked: adaptive.ranked, elapsedMs: performance.now() - started };
+  return {
+    adaptive,
+    ranked: adaptive.ranked,
+    elapsedMs: performance.now() - started,
+    preRefinementElapsedMs,
+  };
+}
+
+function adaptiveTrialMetadata(snapshot, playedKey, refinementSamples = 0, refinementKeys = []) {
+  return {
+    samplesUsed: snapshot.samplesUsed,
+    stoppedAt: snapshot.stoppedAt,
+    stopReason: snapshot.stopReason,
+    recommendationConfidence: snapshot.recommendationConfidence,
+    recommendationKeys: snapshot.plausibleBestKeys,
+    refinementSamples,
+    refinementKeys,
+    minimumSamples: snapshot.minimumSamples,
+    mistakeConfidence: snapshot.choice?.mistakeConfidence ?? 'uncertain',
+    mistakeAssessment: snapshot.choice?.assessment ?? 'uncertain',
+    playedInPlausibleBest: snapshot.choice?.plausibleBestKeys.includes(playedKey) ?? false,
+    choiceGap: snapshot.choice?.gap ?? 0,
+    choiceInterval: snapshot.choice?.interval ?? [0, 0],
+    choiceBatchAgreement: snapshot.choice?.batchAgreement ?? 0,
+    choicePracticalBatchAgreement: snapshot.choice?.practicalBatchAgreement ?? 0,
+    choiceBatchGaps: snapshot.choice?.batchGaps ?? [],
+    stages: snapshot.stages,
+  };
 }
 
 function evaluatedTrial({
@@ -270,6 +302,7 @@ export async function evaluateReliabilityPosition(position, {
   }
 
   const adaptiveTrials = [];
+  const adaptiveControlTrials = [];
   if (includeAdaptive) {
     for (let repetition = 0; repetition < repetitions; repetition += 1) {
       const analysis = await runAdaptiveBenchmarkAnalysis(
@@ -284,6 +317,22 @@ export async function evaluateReliabilityPosition(position, {
         adaptiveRefinementSamples,
         adaptiveRefinementMaximumGap,
       );
+      if (adaptiveRefinementSamples > 0) {
+        const control = analysis.adaptive.preRefinement ?? analysis.adaptive;
+        adaptiveControlTrials.push(evaluatedTrial({
+          repetition,
+          ranked: control.ranked,
+          elapsedMs: analysis.preRefinementElapsedMs,
+          choice: control.choice,
+          referenceTopKey,
+          referenceBestKeys,
+          referenceChoice,
+          referenceRates,
+          referenceBestRate,
+          exactKeys,
+          metadata: adaptiveTrialMetadata(control, position.playedKey),
+        }));
+      }
       adaptiveTrials.push(evaluatedTrial({
         repetition,
         ranked: analysis.ranked,
@@ -295,25 +344,12 @@ export async function evaluateReliabilityPosition(position, {
         referenceRates,
         referenceBestRate,
         exactKeys,
-        metadata: {
-          samplesUsed: analysis.adaptive.samplesUsed,
-          stoppedAt: analysis.adaptive.stoppedAt,
-          stopReason: analysis.adaptive.stopReason,
-          recommendationConfidence: analysis.adaptive.recommendationConfidence,
-          recommendationKeys: analysis.adaptive.plausibleBestKeys,
-          refinementSamples: analysis.adaptive.refinementSamples,
-          refinementKeys: analysis.adaptive.refinementKeys,
-          minimumSamples: analysis.adaptive.minimumSamples,
-          mistakeConfidence: analysis.adaptive.choice?.mistakeConfidence ?? 'uncertain',
-          mistakeAssessment: analysis.adaptive.choice?.assessment ?? 'uncertain',
-          playedInPlausibleBest: analysis.adaptive.choice?.plausibleBestKeys.includes(position.playedKey) ?? false,
-          choiceGap: analysis.adaptive.choice?.gap ?? 0,
-          choiceInterval: analysis.adaptive.choice?.interval ?? [0, 0],
-          choiceBatchAgreement: analysis.adaptive.choice?.batchAgreement ?? 0,
-          choicePracticalBatchAgreement: analysis.adaptive.choice?.practicalBatchAgreement ?? 0,
-          choiceBatchGaps: analysis.adaptive.choice?.batchGaps ?? [],
-          stages: analysis.adaptive.stages,
-        },
+        metadata: adaptiveTrialMetadata(
+          analysis.adaptive,
+          position.playedKey,
+          analysis.adaptive.refinementSamples,
+          analysis.adaptive.refinementKeys,
+        ),
       }));
     }
   }
@@ -346,6 +382,13 @@ export async function evaluateReliabilityPosition(position, {
       refinementSamples: adaptiveRefinementSamples,
       refinementMaximumGap: adaptiveRefinementMaximumGap,
       trials: adaptiveTrials,
+    } : null,
+    adaptiveControl: includeAdaptive && adaptiveRefinementSamples > 0 ? {
+      version: adaptiveAnalysisVersion(0),
+      stages: [...adaptiveStages],
+      refinementSamples: 0,
+      refinementMaximumGap: adaptiveRefinementMaximumGap,
+      trials: adaptiveControlTrials,
     } : null,
   };
 }
@@ -446,9 +489,9 @@ function summarizeBudget(positionResults, budget, seed, confidenceResamples) {
   );
 }
 
-function summarizeAdaptive(positionResults, seed, confidenceResamples) {
-  const relevant = positionResults.filter((position) => position.adaptive?.trials?.length);
-  const trialsFor = (position) => position.adaptive.trials;
+function summarizeAdaptive(positionResults, seed, confidenceResamples, field = 'adaptive') {
+  const relevant = positionResults.filter((position) => position[field]?.trials?.length);
+  const trialsFor = (position) => position[field].trials;
   const summary = summarizeTrials(relevant, trialsFor, `${seed}|adaptive`, confidenceResamples);
   const allTrials = relevant.flatMap(trialsFor);
   const samples = allTrials.map(({ samplesUsed }) => samplesUsed).sort((left, right) => left - right);
@@ -525,10 +568,11 @@ export function summarizeReliability(positionResults, {
     budget,
     summarizeBudget(group, budget, `${seed}|${label}`, confidenceResamples),
   ]));
-  const summarizeAdaptiveGroup = (group, label) => summarizeAdaptive(
+  const summarizeAdaptiveGroup = (group, label, field = 'adaptive') => summarizeAdaptive(
     group,
     `${seed}|${label}`,
     confidenceResamples,
+    field,
   );
   const exactPositions = positionResults.filter((position) => position.exactOracleKeys);
   return {
@@ -552,6 +596,9 @@ export function summarizeReliability(positionResults, {
     },
     overall: summarizeGroup(positionResults, 'overall'),
     adaptive: summarizeAdaptiveGroup(positionResults, 'overall'),
+    adaptiveControl: positionResults.some((position) => position.adaptiveControl?.trials?.length)
+      ? summarizeAdaptiveGroup(positionResults, 'overall', 'adaptiveControl')
+      : null,
     byPhase: Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
       phase,
       summarizeGroup(positionResults.filter((position) => position.phase === phase), phase),
@@ -560,6 +607,16 @@ export function summarizeReliability(positionResults, {
       phase,
       summarizeAdaptiveGroup(positionResults.filter((position) => position.phase === phase), phase),
     ])),
+    adaptiveControlByPhase: positionResults.some((position) => position.adaptiveControl?.trials?.length)
+      ? Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
+        phase,
+        summarizeAdaptiveGroup(
+          positionResults.filter((position) => position.phase === phase),
+          phase,
+          'adaptiveControl',
+        ),
+      ]))
+      : null,
     branchingCounts: Object.fromEntries(RELIABILITY_BRANCHING_BANDS.map((band) => [
       band,
       positionResults.filter((position) => branchingBand(position.branching) === band).length,
@@ -575,5 +632,15 @@ export function summarizeReliability(positionResults, {
         `branching-${band}`,
       ),
     ])),
+    adaptiveControlByBranching: positionResults.some((position) => position.adaptiveControl?.trials?.length)
+      ? Object.fromEntries(RELIABILITY_BRANCHING_BANDS.map((band) => [
+        band,
+        summarizeAdaptiveGroup(
+          positionResults.filter((position) => branchingBand(position.branching) === band),
+          `branching-${band}`,
+          'adaptiveControl',
+        ),
+      ]))
+      : null,
   };
 }

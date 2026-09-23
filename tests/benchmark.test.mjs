@@ -138,6 +138,47 @@ test('reliability evaluation compares independent budgets against one reference'
   assert.ok(summary.adaptive.mistakeAbstentionRate.mean >= 0);
 });
 
+test('paired refinement reuses reference, fixed budgets, and the exact pre-refinement control', async () => {
+  const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'paired-refinement-reuse-test' });
+  const shared = {
+    budgets: [4, 8],
+    repetitions: 1,
+    referenceBudget: 12,
+    adaptiveStages: [4, 8],
+    adaptiveRefinementMaximumGap: 100,
+    seed: 'paired-refinement-reuse-test',
+  };
+  const [standaloneControl, paired] = await Promise.all([
+    evaluateReliabilityPosition(position, { ...shared, adaptiveRefinementSamples: 0 }),
+    evaluateReliabilityPosition(position, { ...shared, adaptiveRefinementSamples: 4 }),
+  ]);
+  const withoutTiming = (value) => {
+    if (Array.isArray(value)) return value.map(withoutTiming);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !['elapsedMs', 'runtimeMs'].includes(key))
+      .map(([key, entry]) => [key, withoutTiming(entry)]));
+  };
+
+  assert.deepEqual(withoutTiming(paired.reference), withoutTiming(standaloneControl.reference));
+  assert.deepEqual(withoutTiming(paired.budgets), withoutTiming(standaloneControl.budgets));
+  assert.deepEqual(withoutTiming(paired.adaptiveControl), withoutTiming(standaloneControl.adaptive));
+  assert.ok(paired.adaptive.trials[0].samplesUsed >= paired.adaptiveControl.trials[0].samplesUsed);
+
+  const summaryOptions = {
+    budgets: shared.budgets,
+    seed: shared.seed,
+    confidenceResamples: 20,
+  };
+  const controlSummary = summarizeReliability([standaloneControl], summaryOptions);
+  const pairedSummary = summarizeReliability([paired], summaryOptions);
+  assert.deepEqual(withoutTiming(pairedSummary.reference), withoutTiming(controlSummary.reference));
+  assert.deepEqual(withoutTiming(pairedSummary.overall), withoutTiming(controlSummary.overall));
+  assert.deepEqual(withoutTiming(pairedSummary.adaptiveControl), withoutTiming(controlSummary.adaptive));
+  assert.equal(pairedSummary.adaptiveControl.trials, 1);
+  assert.equal(pairedSummary.adaptive.trials, 1);
+});
+
 test('fixed and adaptive reliability analysis ignore changed real hidden hands', async () => {
   const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-hidden-safety' });
   const reversedHidden = position.game.hands.slice(1).map((hand) => [...hand].reverse());
