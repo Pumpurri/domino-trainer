@@ -11,6 +11,7 @@ import {
   seededRandom,
 } from '../app/domino-engine.ts';
 import {
+  ADAPTIVE_SAMPLING_VERSION,
   DEFAULT_ADAPTIVE_STAGES,
   ADAPTIVE_SELECTION_VERSION,
   adaptiveAnalysisVersion,
@@ -167,10 +168,22 @@ async function runAdaptiveBenchmarkAnalysis(
   mistakePolicy,
   refinementSamples,
   refinementMaximumGap,
+  samplingMode = 'independent',
 ) {
   const started = performance.now();
   let preRefinementElapsedMs = 0;
   const batches = [];
+  const finalBudget = stages.at(-1);
+  const sharedBelief = samplingMode === 'shared-pool'
+    ? createBeliefState(
+      safeGame,
+      0,
+      particleCountForBudget(finalBudget),
+      undefined,
+      `${seedSalt}|shared-pool`,
+    )
+    : null;
+  let sharedOffset = 0;
   const adaptive = await runAdaptiveAnalysis({
     stages,
     playedKey,
@@ -181,12 +194,26 @@ async function runAdaptiveBenchmarkAnalysis(
     refinementMaximumGap,
     mistakePolicy,
     analyzeBatch: (batchSamples, stageIndex, candidateKeys) => {
-      const batch = runAnalysis(
-        safeGame,
-        batchSamples,
-        `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
-        candidateKeys,
-      );
+      if (sharedBelief && candidateKeys) {
+        throw new Error('Shared-pool sampling does not support candidate-only refinement.');
+      }
+      const batch = sharedBelief
+        ? (() => {
+          const batchStarted = performance.now();
+          const ranked = analyzeMoves(safeGame, sharedBelief.targetCount, sharedBelief, undefined, {
+            representativeLimit: batchSamples,
+            representativePoolSize: finalBudget,
+            representativeOffset: sharedOffset,
+          });
+          sharedOffset += batchSamples;
+          return { ranked, elapsedMs: performance.now() - batchStarted };
+        })()
+        : runAnalysis(
+          safeGame,
+          batchSamples,
+          `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
+          candidateKeys,
+        );
       batches.push(batch.ranked);
       if (!candidateKeys) preRefinementElapsedMs += batch.elapsedMs;
       return batch.ranked;
@@ -274,8 +301,12 @@ export async function evaluateReliabilityPosition(position, {
   adaptiveRefinementSamples = 0,
   adaptiveRefinementMaximumGap = 3,
   adaptiveSelectionPolicies = [],
+  adaptiveSamplingPolicies = [],
   seed = 'mesa-quince-reliability-v1',
 } = {}) {
+  if (adaptiveSamplingPolicies.length && adaptiveRefinementSamples > 0) {
+    throw new Error('Adaptive sampling experiments require candidate-only refinement to be disabled.');
+  }
   const safeGame = informationSafeBenchmarkGame(position.game);
   const reference = runAnalysis(safeGame, referenceBudget, `${seed}|${position.id}|reference`);
   const referenceTopKey = moveKey(reference.ranked[0]);
@@ -311,6 +342,7 @@ export async function evaluateReliabilityPosition(position, {
   const adaptiveTrials = [];
   const adaptiveControlTrials = [];
   const adaptiveVariantTrials = Object.fromEntries(adaptiveSelectionPolicies.map((policy) => [policy, []]));
+  const adaptiveSamplingVariantTrials = Object.fromEntries(adaptiveSamplingPolicies.map((policy) => [policy, []]));
   if (includeAdaptive) {
     for (let repetition = 0; repetition < repetitions; repetition += 1) {
       const analysis = await runAdaptiveBenchmarkAnalysis(
@@ -359,6 +391,49 @@ export async function evaluateReliabilityPosition(position, {
           analysis.adaptive.refinementKeys,
         ),
       }));
+      for (const policy of adaptiveSamplingPolicies) {
+        if (policy !== 'phase-aware') throw new Error(`Unknown adaptive sampling policy: ${policy}.`);
+        if (position.phase !== 'middle') {
+          adaptiveSamplingVariantTrials[policy].push({
+            ...adaptiveTrials.at(-1),
+            samplingPolicy: policy,
+            selectionChanged: false,
+            reusedControl: true,
+          });
+          continue;
+        }
+        const candidate = await runAdaptiveBenchmarkAnalysis(
+          safeGame,
+          position.playedKey,
+          position.phase,
+          legalMovesFor(position.game.hands[0], position.game.chain).length,
+          adaptiveStages,
+          `${seed}|${position.id}|adaptive-sampling-${policy}|repeat-${repetition}`,
+          adaptiveRecommendationGap,
+          adaptiveMistakePolicy,
+          0,
+          adaptiveRefinementMaximumGap,
+          'shared-pool',
+        );
+        adaptiveSamplingVariantTrials[policy].push(evaluatedTrial({
+          repetition,
+          ranked: candidate.ranked,
+          elapsedMs: candidate.elapsedMs,
+          choice: candidate.adaptive.choice,
+          referenceTopKey,
+          referenceBestKeys,
+          referenceChoice,
+          referenceRates,
+          referenceBestRate,
+          exactKeys,
+          metadata: {
+            ...adaptiveTrialMetadata(candidate.adaptive, position.playedKey),
+            samplingPolicy: policy,
+            selectionChanged: moveKey(candidate.ranked[0]) !== moveKey(analysis.ranked[0]),
+            reusedControl: false,
+          },
+        }));
+      }
       for (const policy of adaptiveSelectionPolicies) {
         const selection = selectAdaptiveMove({
           ranked: analysis.ranked,
@@ -436,6 +511,12 @@ export async function evaluateReliabilityPosition(position, {
       selectionPolicy: policy,
       stages: [...adaptiveStages],
       trials: adaptiveVariantTrials[policy],
+    }])) : {},
+    adaptiveSamplingVariants: includeAdaptive ? Object.fromEntries(adaptiveSamplingPolicies.map((policy) => [policy, {
+      version: ADAPTIVE_SAMPLING_VERSION,
+      samplingPolicy: policy,
+      stages: [...adaptiveStages],
+      trials: adaptiveSamplingVariantTrials[policy],
     }])) : {},
   };
 }
@@ -634,10 +715,18 @@ export function summarizeReliability(positionResults, {
   const adaptiveVariantPolicies = [...new Set(positionResults.flatMap((position) => (
     Object.keys(position.adaptiveVariants ?? {})
   )))].sort();
+  const adaptiveSamplingVariantPolicies = [...new Set(positionResults.flatMap((position) => (
+    Object.keys(position.adaptiveSamplingVariants ?? {})
+  )))].sort();
   const summarizeVariantGroup = (group, label, policy) => summarizeAdaptiveGroup(
     group,
     label,
     (position) => position.adaptiveVariants?.[policy],
+  );
+  const summarizeSamplingVariantGroup = (group, label, policy) => summarizeAdaptiveGroup(
+    group,
+    label,
+    (position) => position.adaptiveSamplingVariants?.[policy],
   );
   const exactPositions = positionResults.filter((position) => position.exactOracleKeys);
   return {
@@ -668,6 +757,10 @@ export function summarizeReliability(positionResults, {
       policy,
       summarizeVariantGroup(positionResults, 'overall', policy),
     ])),
+    adaptiveSamplingVariants: Object.fromEntries(adaptiveSamplingVariantPolicies.map((policy) => [
+      policy,
+      summarizeSamplingVariantGroup(positionResults, 'overall', policy),
+    ])),
     byPhase: Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
       phase,
       summarizeGroup(positionResults.filter((position) => position.phase === phase), phase),
@@ -691,6 +784,17 @@ export function summarizeReliability(positionResults, {
       Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
         phase,
         summarizeVariantGroup(
+          positionResults.filter((position) => position.phase === phase),
+          phase,
+          policy,
+        ),
+      ])),
+    ])),
+    adaptiveSamplingVariantsByPhase: Object.fromEntries(adaptiveSamplingVariantPolicies.map((policy) => [
+      policy,
+      Object.fromEntries(RELIABILITY_PHASES.map((phase) => [
+        phase,
+        summarizeSamplingVariantGroup(
           positionResults.filter((position) => position.phase === phase),
           phase,
           policy,
@@ -733,6 +837,17 @@ export function summarizeReliability(positionResults, {
         ),
       ])),
     ])),
+    adaptiveSamplingVariantsByBranching: Object.fromEntries(adaptiveSamplingVariantPolicies.map((policy) => [
+      policy,
+      Object.fromEntries(RELIABILITY_BRANCHING_BANDS.map((band) => [
+        band,
+        summarizeSamplingVariantGroup(
+          positionResults.filter((position) => branchingBand(position.branching) === band),
+          `branching-${band}`,
+          policy,
+        ),
+      ])),
+    ])),
   };
 }
 
@@ -743,6 +858,21 @@ export function adaptiveSelectionDevelopmentGate(candidate, control) {
     repeatAcceptabilityNoninferior: candidate.repeatAcceptability.mean >= control.repeatAcceptability.mean,
     withinOnePointNoninferior: candidate.withinOnePoint.mean >= control.withinOnePoint.mean - 0.01,
     meanRegretNoninferior: candidate.meanRegret.mean <= control.meanRegret.mean + 0.02,
+    mistakeLabelAgreementPreserved: candidate.mistakeLabelAgreement.mean >= control.mistakeLabelAgreement.mean,
+    falseAccusationsPreserved: candidate.falsePositiveMistakes.mean <= control.falsePositiveMistakes.mean,
+    sampleUsagePreserved: candidate.samplesUsed.mean.mean <= control.samplesUsed.mean.mean,
+  };
+  return { passed: Object.values(checks).every(Boolean), checks };
+}
+
+export function adaptiveSamplingDevelopmentGate(candidate, control, middleCandidate, middleControl) {
+  const checks = {
+    changesMiddleDecisions: middleCandidate.selectionChangeRate.mean > 0,
+    repeatAcceptabilityTarget: candidate.repeatAcceptability.mean >= 0.9,
+    repeatAcceptabilityNoninferior: candidate.repeatAcceptability.mean >= control.repeatAcceptability.mean,
+    withinOnePointNoninferior: candidate.withinOnePoint.mean >= control.withinOnePoint.mean - 0.01,
+    meanRegretNoninferior: candidate.meanRegret.mean <= control.meanRegret.mean + 0.02,
+    middleRegretImprovement: middleCandidate.meanRegret.mean <= middleControl.meanRegret.mean - 0.03,
     mistakeLabelAgreementPreserved: candidate.mistakeLabelAgreement.mean >= control.mistakeLabelAgreement.mean,
     falseAccusationsPreserved: candidate.falsePositiveMistakes.mean <= control.falsePositiveMistakes.mean,
     sampleUsagePreserved: candidate.samplesUsed.mean.mean <= control.samplesUsed.mean.mean,

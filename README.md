@@ -28,7 +28,7 @@ The 400-position V2 holdout failed its coaching-label agreement gate. A separate
 
 The fresh V3 holdout passed every selective coaching-label check and all move-quality checks except the locked repeat-acceptability requirement, which reached 88.8% instead of 90%. V3 therefore remains outside the live coach.
 
-The V4 candidate-only refinement and V5 robust-selection experiments both failed development and remain outside the live coach. V5 showed that instability is concentrated in opening and high-branching decisions, so the next benchmark isolates sampling, staged aggregation, and early stopping before another analyzer is proposed.
+The V4 candidate-only refinement and V5 robust-selection experiments both failed development and remain outside the live coach. A paired sampler diagnostic found opposite effects by phase, so V6 now tests a benchmark-only phase-aware sampler on a fresh development corpus. It keeps independent batches in opening, late, and blocked play, and uses one persistent disjoint hidden-deal sequence only in the middle game. No V6 result changes the product without a separate passing holdout.
 
 The completed paired sampler-ablation found no aggregation defect and no early-stopping effect on difficult positions. It found opposite sampling effects by phase: independent stage samples performed better in high-branching openings, while a persistent shared particle sequence performed better in wide middle-game decisions. No global sampling change or live-coach change was made.
 

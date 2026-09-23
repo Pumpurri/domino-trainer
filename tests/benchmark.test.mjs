@@ -13,6 +13,7 @@ import { strategicScenarios } from '../scripts/strategic-scenarios.mjs';
 import {
   RELIABILITY_PHASES,
   adaptiveReliabilityGate,
+  adaptiveSamplingDevelopmentGate,
   adaptiveSelectionDevelopmentGate,
   collectDecisionCorpus,
   evaluateReliabilityPosition,
@@ -131,6 +132,43 @@ test('selection development gate requires changed decisions and preserves shared
   }, control).passed, false);
 });
 
+test('phase-aware sampling gate requires middle-game regret improvement and preserved quality', () => {
+  const metric = (mean) => ({ mean, low: mean, high: mean });
+  const control = {
+    repeatAcceptability: metric(0.91),
+    withinOnePoint: metric(0.95),
+    meanRegret: metric(0.14),
+    mistakeLabelAgreement: metric(0.96),
+    falsePositiveMistakes: metric(0.01),
+    samplesUsed: { mean: metric(1800) },
+  };
+  const candidate = {
+    ...control,
+    repeatAcceptability: metric(0.92),
+    withinOnePoint: metric(0.945),
+    meanRegret: metric(0.15),
+    samplesUsed: { mean: metric(1750) },
+  };
+  const middleControl = { meanRegret: metric(0.25) };
+  const middleCandidate = {
+    meanRegret: metric(0.21),
+    selectionChangeRate: metric(0.08),
+  };
+
+  assert.equal(adaptiveSamplingDevelopmentGate(
+    candidate,
+    control,
+    middleCandidate,
+    middleControl,
+  ).passed, true);
+  assert.equal(adaptiveSamplingDevelopmentGate(
+    candidate,
+    control,
+    { ...middleCandidate, meanRegret: metric(0.23) },
+    middleControl,
+  ).passed, false);
+});
+
 test('reliability evaluation compares independent budgets against one reference', async () => {
   const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-evaluation-test' });
   const evaluated = await evaluateReliabilityPosition(position, {
@@ -220,8 +258,55 @@ test('paired refinement reuses reference, fixed budgets, and the exact pre-refin
   assert.equal(pairedSummary.adaptive.trials, 1);
 });
 
+test('phase-aware sampling changes only middle-game evidence and reuses every other control trial', async () => {
+  const positions = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'phase-aware-sampling-test' });
+  const opening = positions.find(({ phase }) => phase === 'opening');
+  const middle = positions.find(({ phase }) => phase === 'middle');
+  const options = {
+    budgets: [4],
+    repetitions: 2,
+    referenceBudget: 8,
+    adaptiveStages: [4, 8],
+    adaptiveSamplingPolicies: ['phase-aware'],
+    seed: 'phase-aware-sampling-test',
+  };
+  const [openingResult, middleResult] = await Promise.all([
+    evaluateReliabilityPosition(opening, options),
+    evaluateReliabilityPosition(middle, options),
+  ]);
+  const withoutSamplingFields = (trial) => Object.fromEntries(
+    Object.entries(trial).filter(([key]) => ![
+      'samplingPolicy',
+      'selectionChanged',
+      'reusedControl',
+    ].includes(key)),
+  );
+
+  assert.deepEqual(
+    openingResult.adaptiveSamplingVariants['phase-aware'].trials.map(withoutSamplingFields),
+    openingResult.adaptive.trials,
+  );
+  assert.ok(openingResult.adaptiveSamplingVariants['phase-aware'].trials.every((trial) => (
+    trial.reusedControl && !trial.selectionChanged
+  )));
+  assert.ok(middleResult.adaptiveSamplingVariants['phase-aware'].trials.every((trial) => (
+    !trial.reusedControl && trial.samplesUsed <= 8
+  )));
+
+  const summary = summarizeReliability([openingResult, middleResult], {
+    budgets: options.budgets,
+    seed: options.seed,
+    confidenceResamples: 20,
+  });
+  assert.equal(summary.adaptiveSamplingVariants['phase-aware'].trials, 4);
+  assert.equal(summary.adaptiveSamplingVariantsByPhase['phase-aware'].middle.trials, 2);
+});
+
 test('fixed and adaptive reliability analysis ignore changed real hidden hands', async () => {
-  const [position] = collectDecisionCorpus({ positionsPerPhase: 1, seed: 'reliability-hidden-safety' });
+  const position = collectDecisionCorpus({
+    positionsPerPhase: 1,
+    seed: 'reliability-hidden-safety',
+  }).find(({ phase }) => phase === 'middle');
   const reversedHidden = position.game.hands.slice(1).map((hand) => [...hand].reverse());
   const alternate = {
     ...position,
@@ -233,6 +318,7 @@ test('fixed and adaptive reliability analysis ignore changed real hidden hands',
     referenceBudget: 8,
     adaptiveStages: [4, 8],
     adaptiveSelectionPolicies: ['batch-consensus'],
+    adaptiveSamplingPolicies: ['phase-aware'],
     seed: 'reliability-hidden-safety',
   };
   const [first, second] = await Promise.all([
@@ -260,6 +346,12 @@ test('fixed and adaptive reliability analysis ignore changed real hidden hands',
     adaptiveVariant: result.adaptiveVariants['batch-consensus'].trials.map(({ topKey, samplesUsed }) => (
       [topKey, samplesUsed]
     )),
+    samplingVariant: result.adaptiveSamplingVariants['phase-aware'].trials.map(({
+      topKey,
+      verdict,
+      mistakeConfidence,
+      samplesUsed,
+    }) => [topKey, verdict, mistakeConfidence, samplesUsed]),
   });
   assert.deepEqual(decisionSignature(first), decisionSignature(second));
 });
@@ -272,6 +364,7 @@ test('parallel reliability workers preserve deterministic decisions and labels',
     referenceBudget: 8,
     adaptiveStages: [4, 8],
     adaptiveSelectionPolicies: ['downside-protected'],
+    adaptiveSamplingPolicies: ['phase-aware'],
     seed: 'reliability-parallel-test',
   };
   const sequential = await Promise.all(positions.map((position) => evaluateReliabilityPosition(position, options)));
@@ -284,6 +377,7 @@ test('parallel reliability workers preserve deterministic decisions and labels',
     trialVerdict: result.budgets[4].trials[0].verdict,
     trialRegret: result.budgets[4].trials[0].regret,
     selectionTop: result.adaptiveVariants['downside-protected'].trials[0].topKey,
+    samplingTop: result.adaptiveSamplingVariants['phase-aware'].trials[0].topKey,
   })).sort((left, right) => left.id.localeCompare(right.id));
   assert.deepEqual(decisions(parallel), decisions(sequential));
 });

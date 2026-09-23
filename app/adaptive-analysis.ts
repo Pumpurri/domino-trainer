@@ -8,6 +8,7 @@ import {
 export const ADAPTIVE_ANALYSIS_VERSION = 'adaptive-confirmed-v3-labels';
 export const ADAPTIVE_REFINEMENT_VERSION = 'adaptive-confirmed-v4-top-set-refinement';
 export const ADAPTIVE_SELECTION_VERSION = 'adaptive-v5-robust-selection';
+export const ADAPTIVE_SAMPLING_VERSION = 'adaptive-v6-phase-aware-sampling';
 export const DEFAULT_ADAPTIVE_STAGES = [120, 250, 500, 1000, 2000] as const;
 export const DEFAULT_ADAPTIVE_REFINEMENT_SAMPLES = 250;
 export const DEFAULT_ADAPTIVE_REFINEMENT_MAXIMUM_GAP = 3;
@@ -18,8 +19,10 @@ export const ADAPTIVE_SELECTION_POLICIES = [
   'batch-consensus',
   'downside-protected',
 ] as const;
+export const ADAPTIVE_SAMPLING_POLICIES = ['phase-aware'] as const;
 
 export type AdaptiveSelectionPolicy = typeof ADAPTIVE_SELECTION_POLICIES[number];
+export type AdaptiveSamplingPolicy = typeof ADAPTIVE_SAMPLING_POLICIES[number];
 
 export type AdaptiveSelectionCandidateEvidence = {
   key: string;

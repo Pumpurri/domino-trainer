@@ -350,3 +350,28 @@ The 48-position run completed all 144 repetitions. One-shot and shared staged an
 Independent stage sampling crossed the predeclared overall harm threshold through mean regret: 0.267 versus 0.211 for a shared particle sequence, a +0.056 difference. Within-one-point quality was 88.9% versus 90.3%, while repeat acceptability was 77.1% for both. The methods chose different moves in 39 of 144 trials. Shared sampling had lower reference regret in 20 trials, independent sampling in 19, and 105 were tied, showing that harm came from the magnitude of a few misses rather than a uniform advantage.
 
 The effect reversed by phase. In high-branching openings, independent sampling reached 94.4% within one point, 0.149 mean regret, and 87.5% repeat acceptability, compared with 88.9%, 0.215, and 75.0% for shared sampling. In wide middle positions, shared sampling reached 91.7%, 0.207, and 79.2%, compared with 83.3%, 0.386, and 66.7% for independent sampling. Confidence intervals remain broad with 24 positions per group, so this result rejects a global shared-pool replacement. It supports a benchmark-only phase-aware candidate: retain independent stage samples for openings, use a persistent disjoint particle sequence in the middle game, and leave late and blocked play unchanged. That candidate must be frozen before a new full-corpus development run and cannot be integrated from this diagnostic alone. See `benchmarks/sampler-ablation-v1-48.md`.
+
+### V6 phase-aware sampling protocol
+
+V6 tests the phase interaction found by the sampler ablation without changing the live coach. The candidate is frozen before opening its development corpus. In middle-game positions, its adaptive batches draw disjoint windows from one persistent 2,000-sample plausible hidden-deal pool. In opening, late, and likely-block positions, it reuses the matched V3 control result exactly. This avoids redundant simulation and guarantees that only the middle-game sampling policy can change a decision. Opponents' realized hidden tiles remain unavailable to every analysis.
+
+The fresh seed `mesa-quince-adaptive-v6-development-v1` supplies 200 positions balanced across four phases, with three repetitions per position, fixed 120, 500, and 2,000-sample baselines, adaptive stages at 120, 250, 500, 1,000, and 2,000, and an independent 5,000-sample reference. The candidate receives no extra nominal samples. The paired control uses the current independent stage sampler.
+
+Every check below is locked before the run. V6 advances only if all pass:
+
+- At least 90% repeat acceptability overall.
+- Repeat acceptability no lower than the matched control.
+- Within-one-point quality no more than one percentage point below control.
+- Mean regret no more than 0.02 point above control.
+- Middle-game mean regret improves by at least 0.03 point.
+- Mistake-label agreement does not decline and false-positive mistake calls do not increase.
+- Mean sample use does not increase.
+- At least one middle-game recommendation changes, proving that the candidate was exercised.
+
+Passing development would authorize only a new, separately seeded 400-position holdout. It would not promote V6 into the product. Failing any check retires the candidate and moves the investigation to rollout quality.
+
+```sh
+caffeinate -i npm run benchmark:reliability:develop:v6
+```
+
+The run uses nine worker threads and atomic per-position checkpoints at `outputs/adaptive-v6-phase-aware-development-200.checkpoint`. Add `-- --resume` after an interruption.
