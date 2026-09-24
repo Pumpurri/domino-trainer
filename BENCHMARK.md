@@ -456,3 +456,5 @@ caffeinate -i npm run benchmark:analyzer-rollout
 ```
 
 The study uses nine workers and atomic per-position checkpoints at `outputs/analyzer-rollout-v1-200.checkpoint`. Add `-- --resume` after an interruption.
+
+The first execution halted after checkpointing 161 positions, before any aggregate result was calculated or inspected. A highly constrained block position produced fewer valid hidden deals than its requested batch within the generic rejection sampler's eight-attempts-per-target ceiling. The protocol was amended without reducing any budget: benchmark sampling now deterministically expands its attempt target until it obtains the full requested number of valid deals, for at most four expansions. Each retry restarts the same seeded sequence, so it only extends the accepted sample prefix, and both policies still receive identical deals. Reference and adaptive outputs record how many expansions were required. The saved 161 positions need no recalculation because none encountered this condition.

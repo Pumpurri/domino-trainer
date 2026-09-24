@@ -147,15 +147,34 @@ function exactOracleKeys(game, maximumTiles = 15) {
 }
 
 function runAnalysis(safeGame, budget, seedSalt, rootCandidateKeys, rolloutPolicy = 'current') {
-  const particleCount = particleCountForBudget(budget);
-  const beliefState = createBeliefState(safeGame, 0, particleCount, undefined, seedSalt);
+  let particleTarget = particleCountForBudget(budget);
+  let beliefState;
+  let beliefRetries = 0;
+  for (; beliefRetries < 4; beliefRetries += 1) {
+    beliefState = createBeliefState(safeGame, 0, particleTarget, undefined, seedSalt);
+    if (beliefState.particles.length >= budget) break;
+    if (!beliefState.particles.length) break;
+    particleTarget = Math.ceil(
+      particleTarget * budget / beliefState.particles.length * 1.2,
+    );
+  }
+  if (!beliefState || beliefState.particles.length < budget) {
+    throw new Error(
+      `Could not sample ${budget} valid hidden deals after ${beliefRetries} expanded attempts; found ${beliefState?.particles.length ?? 0}.`,
+    );
+  }
   const started = performance.now();
-  const ranked = analyzeMoves(safeGame, particleCount, beliefState, undefined, {
+  const ranked = analyzeMoves(safeGame, particleTarget, beliefState, undefined, {
     representativeLimit: budget,
     rootCandidateKeys,
     rolloutPolicy,
   });
-  return { ranked, elapsedMs: performance.now() - started };
+  return {
+    ranked,
+    elapsedMs: performance.now() - started,
+    beliefRetries,
+    beliefTarget: particleTarget,
+  };
 }
 
 async function runAdaptiveBenchmarkAnalysis(
@@ -174,6 +193,7 @@ async function runAdaptiveBenchmarkAnalysis(
 ) {
   const started = performance.now();
   let preRefinementElapsedMs = 0;
+  let beliefRetries = 0;
   const batches = [];
   const finalBudget = stages.at(-1);
   const sharedBelief = samplingMode === 'shared-pool'
@@ -219,6 +239,7 @@ async function runAdaptiveBenchmarkAnalysis(
           rolloutPolicy,
         );
       batches.push(batch.ranked);
+      beliefRetries += batch.beliefRetries ?? 0;
       if (!candidateKeys) preRefinementElapsedMs += batch.elapsedMs;
       return batch.ranked;
     },
@@ -229,6 +250,7 @@ async function runAdaptiveBenchmarkAnalysis(
     elapsedMs: performance.now() - started,
     preRefinementElapsedMs,
     batches,
+    beliefRetries,
   };
 }
 
@@ -596,6 +618,8 @@ export async function evaluateAnalyzerRolloutPosition(position, {
         || pairedRatedMoveDifference(analysis.ranked[0], analysis.ranked[1]).interval[0] > 0,
       exactOracleAgreement: exactKeys ? exactKeys.includes(topKey) : null,
       elapsedMs: analysis.elapsedMs,
+      beliefRetries: analysis.beliefRetries,
+      beliefTarget: analysis.beliefTarget,
       rates: Object.fromEntries(rates),
     };
   }
@@ -634,6 +658,7 @@ export async function evaluateAnalyzerRolloutPosition(position, {
         metadata: {
           ...adaptiveTrialMetadata(analyses[policy].adaptive, position.playedKey),
           rolloutPolicy: policy,
+          beliefRetries: analyses[policy].beliefRetries,
         },
       }));
     }
