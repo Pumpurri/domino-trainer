@@ -45,7 +45,12 @@ export type TrainingExample = {
   options: TrainingOption[];
   chosenKey: string;
   bestKey: string;
+  plausibleBestKeys: string[];
   verdict: DecisionReview['verdict'];
+  assessment: DecisionReview['assessment'];
+  recommendationConfidence: DecisionReview['recommendationConfidence'];
+  batchAgreement: number;
+  practicalBatchAgreement: number;
   estimatedWinRateLost: number;
   differenceInterval: [number, number];
   beliefConfidence: DecisionReview['confidence'];
@@ -217,6 +222,17 @@ export function parseTrainingProgress(serialized: string | null): TrainingProgre
       examples: Array.isArray(parsed.examples) ? parsed.examples.slice(-300).map((example) => ({
         ...example,
         analysisQuality: example.analysisQuality === 'deep' ? 'deep' : 'live',
+        plausibleBestKeys: Array.isArray(example.plausibleBestKeys) && example.plausibleBestKeys.length
+          ? [...example.plausibleBestKeys]
+          : [example.bestKey],
+        assessment: example.assessment === 'mistake' || example.assessment === 'uncertain'
+          ? example.assessment
+          : 'acceptable',
+        recommendationConfidence: example.recommendationConfidence === 'uncertain' ? 'uncertain' : 'clear',
+        batchAgreement: Number.isFinite(example.batchAgreement) ? example.batchAgreement : 0,
+        practicalBatchAgreement: Number.isFinite(example.practicalBatchAgreement)
+          ? example.practicalBatchAgreement
+          : 0,
       })) : [],
     };
   } catch {
@@ -245,6 +261,9 @@ function trainingExample(
   comparison?: DeepDecisionComparison,
 ): TrainingExample {
   const { record } = decision;
+  const plausibleBestKeys = decision.plausibleBestKeys?.length
+    ? decision.plausibleBestKeys
+    : [record.bestKey];
   return {
     id: `${roundKey}:${record.id}`,
     roundKey,
@@ -271,7 +290,12 @@ function trainingExample(
     })),
     chosenKey: record.chosenKey,
     bestKey: record.bestKey,
+    plausibleBestKeys: [...plausibleBestKeys],
     verdict: decision.verdict,
+    assessment: decision.assessment ?? (isConfidentMistake(decision) ? 'mistake' : 'acceptable'),
+    recommendationConfidence: decision.recommendationConfidence ?? (plausibleBestKeys.length === 1 ? 'clear' : 'uncertain'),
+    batchAgreement: decision.batchAgreement ?? 0,
+    practicalBatchAgreement: decision.practicalBatchAgreement ?? 0,
     estimatedWinRateLost: Math.max(0, decision.winRateGap),
     differenceInterval: [...decision.interval],
     beliefConfidence: decision.confidence,

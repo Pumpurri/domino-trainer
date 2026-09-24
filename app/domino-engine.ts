@@ -187,11 +187,27 @@ export type CalibrationPoint = {
   confidence: BeliefConfidence | StyleConfidence;
 };
 export type DecisionVerdict = 'best' | 'close' | 'slight' | 'mistake' | 'big-mistake';
+export type DecisionAssessment = 'acceptable' | 'uncertain' | 'mistake';
+export type DecisionOptionAssessment = {
+  verdict: DecisionVerdict;
+  assessment: DecisionAssessment;
+  plausibleBestKeys: string[];
+  recommendationConfidence: 'clear' | 'uncertain';
+  batchAgreement: number;
+  practicalBatchAgreement: number;
+  gap: number;
+  interval: [number, number];
+};
 export type DecisionReview = {
   record: DecisionRecord;
   chosen: DecisionOption;
   best: DecisionOption;
   verdict: DecisionVerdict;
+  assessment: DecisionAssessment;
+  plausibleBestKeys: string[];
+  recommendationConfidence: 'clear' | 'uncertain';
+  batchAgreement: number;
+  practicalBatchAgreement: number;
   winRateGap: number;
   interval: [number, number];
   confidence: BeliefConfidence;
@@ -219,8 +235,11 @@ export type DeepDecisionComparison = {
   recordId: string;
   analyzed: true;
   agreed: boolean;
+  exactTopAgreement: boolean;
   liveBestKey: string;
   deepBestKey: string;
+  livePlausibleBestKeys: string[];
+  deepPlausibleBestKeys: string[];
   liveVerdict: DecisionVerdict;
   deepVerdict: DecisionVerdict;
   liveWinRateGap: number;
@@ -2814,7 +2833,7 @@ export function reasonForMove(game: Game, move: RatedMove, comparison?: RatedMov
   return `It won about ${Math.round(move.winRate)}% of the choice-weighted simulations, with ${Math.round(move.evidence.emptyWinRate)}% ending by playing the final tile and ${Math.round(move.evidence.blockedWinRate)}% by winning a block.`;
 }
 
-function optionFromRatedMove(move: RatedMove): DecisionOption {
+export function decisionOptionFromRatedMove(move: RatedMove): DecisionOption {
   return {
     key: moveKey(move),
     tile: { ...move.tile },
@@ -2895,7 +2914,7 @@ export function createDecisionRecord(
     ends: endsOf(game.chain),
     chosenKey: moveKey(chosen),
     bestKey: moveKey(best),
-    options: ranked.map(optionFromRatedMove),
+    options: ranked.map(decisionOptionFromRatedMove),
     knownEvidence,
     inferredEvidence: [...beliefReads, ...styleReads],
     beliefs: beliefs.map((belief) => ({
@@ -3016,6 +3035,95 @@ function pairedDifference(best: DecisionOption, chosen: DecisionOption): { gap: 
   return { gap: mean * 100, interval: [(mean - spread) * 100, (mean + spread) * 100] };
 }
 
+const recommendationPracticalGap = 1;
+const mistakeMinimumGap = 4;
+const mistakePracticalGap = 1.5;
+const mistakeBatchCount = 4;
+
+function pairedBatchGaps(best: DecisionOption, chosen: DecisionOption): number[] {
+  if (best.key === chosen.key) return Array(mistakeBatchCount).fill(0);
+  const count = Math.min(
+    best.pairedWins.length,
+    chosen.pairedWins.length,
+    best.pairedWeights.length,
+    chosen.pairedWeights.length,
+  );
+  if (count < mistakeBatchCount) return [];
+  const weightedTotals = Array(mistakeBatchCount).fill(0);
+  const weights = Array(mistakeBatchCount).fill(0);
+  for (let index = 0; index < count; index += 1) {
+    const batch = index % mistakeBatchCount;
+    const weight = (best.pairedWeights[index] + chosen.pairedWeights[index]) / 2;
+    weightedTotals[batch] += (best.pairedWins[index] - chosen.pairedWins[index]) * weight;
+    weights[batch] += weight;
+  }
+  if (weights.some((weight) => weight <= 0)) return [];
+  return weightedTotals.map((total, index) => total / weights[index] * 100);
+}
+
+function plausibleOptionKeys(options: DecisionOption[], bestKey: string): string[] {
+  const top = options.find((option) => option.key === bestKey);
+  if (!top) return [];
+  return options
+    .filter((option) => {
+      if (option.key === top.key) return true;
+      const difference = pairedDifference(top, option);
+      return difference.gap <= recommendationPracticalGap
+        || difference.interval[0] <= recommendationPracticalGap;
+    })
+    .map((option) => option.key);
+}
+
+export function plausibleDecisionKeys(record: DecisionRecord): string[] {
+  return plausibleOptionKeys(record.options, record.bestKey);
+}
+
+export function assessDecisionOptions(
+  options: DecisionOption[],
+  bestKey: string,
+  chosenKey: string,
+): DecisionOptionAssessment {
+  const chosen = options.find((option) => option.key === chosenKey);
+  const best = options.find((option) => option.key === bestKey);
+  if (!chosen || !best) throw new Error('Decision assessment requires both the top and chosen options.');
+  const difference = pairedDifference(best, chosen);
+  const plausibleBestKeys = plausibleOptionKeys(options, bestKey);
+  const chosenIsPlausible = plausibleBestKeys.includes(chosen.key);
+  const batchGaps = pairedBatchGaps(best, chosen);
+  const batchAgreement = batchGaps.length
+    ? batchGaps.filter((gap) => gap > 0).length / batchGaps.length
+    : 0;
+  const practicalBatchAgreement = batchGaps.length
+    ? batchGaps.filter((gap) => gap > mistakePracticalGap).length / batchGaps.length
+    : 0;
+  const definitelyWorse = best.key !== chosen.key
+    && !chosenIsPlausible
+    && difference.gap >= mistakeMinimumGap
+    && difference.interval[0] > mistakePracticalGap
+    && batchGaps.length === mistakeBatchCount
+    && batchAgreement >= 0.75
+    && practicalBatchAgreement >= 0.5;
+  const verdict: DecisionVerdict = best.key === chosen.key
+    ? 'best'
+    : !definitelyWorse
+      ? 'close'
+      : difference.gap < 10
+        ? 'slight'
+        : difference.gap < 20
+          ? 'mistake'
+          : 'big-mistake';
+  return {
+    verdict,
+    assessment: chosenIsPlausible ? 'acceptable' : definitelyWorse ? 'mistake' : 'uncertain',
+    plausibleBestKeys,
+    recommendationConfidence: plausibleBestKeys.length === 1 ? 'clear' : 'uncertain',
+    batchAgreement,
+    practicalBatchAgreement,
+    gap: difference.gap,
+    interval: difference.interval,
+  };
+}
+
 function actualHandsAtDecision(finalGame: Game, eventCount: number): Tile[][] {
   return handsBeforeEvent(finalGame, finalGame.hands, Math.min(eventCount, finalGame.events.length));
 }
@@ -3064,33 +3172,38 @@ function simulatedComparison(best: DecisionOption, chosen: DecisionOption): stri
 function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview {
   const chosen = record.options.find((option) => option.key === record.chosenKey)!;
   const best = record.options.find((option) => option.key === record.bestKey)!;
-  const difference = pairedDifference(best, chosen);
-  const definitelyWorse = best.key !== chosen.key && difference.interval[0] > 0;
-  const verdict: DecisionVerdict = best.key === chosen.key
-    ? 'best'
-    : !definitelyWorse || difference.gap < 3
-      ? 'close'
-      : difference.gap < 10
-        ? 'slight'
-        : difference.gap < 20
-          ? 'mistake'
-          : 'big-mistake';
+  const assessmentResult = assessDecisionOptions(record.options, record.bestKey, record.chosenKey);
+  const {
+    verdict,
+    assessment,
+    plausibleBestKeys,
+    recommendationConfidence,
+    batchAgreement,
+    practicalBatchAgreement,
+  } = assessmentResult;
   const confidence: BeliefConfidence = verdict === 'close' || record.beliefConfidence === 'low'
     ? 'low'
-    : difference.interval[0] >= 5 && chosen.samples >= 60
+    : assessmentResult.interval[0] >= 5 && chosen.samples >= 60
       ? 'high'
       : 'moderate';
   const audit = beliefAudit(record, actualHandsAtDecision(finalGame, record.eventCount));
-  const uncertainty = verdict === 'close'
-    ? `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points, so this is not a reliable mistake.`
-    : `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points. This supports the comparison, but it does not guarantee the alternate move would win this exact round.`;
+  const uncertainty = assessment === 'acceptable' && plausibleBestKeys.length > 1
+    ? `${plausibleBestKeys.length} moves remain strong options because the simulation could not separate them by more than a practical one-point margin.`
+    : verdict === 'close'
+      ? `The paired 95% difference interval was ${Math.round(assessmentResult.interval[0])} to ${Math.round(assessmentResult.interval[1])} points, but the evidence was not consistent enough to call this a mistake.`
+      : `The paired 95% difference interval was ${Math.round(assessmentResult.interval[0])} to ${Math.round(assessmentResult.interval[1])} points, with the stronger move leading in ${Math.round(batchAgreement * 100)}% of four evidence groups.`;
   return {
     record,
     chosen,
     best,
     verdict,
-    winRateGap: difference.gap,
-    interval: difference.interval,
+    assessment,
+    plausibleBestKeys,
+    recommendationConfidence,
+    batchAgreement,
+    practicalBatchAgreement,
+    winRateGap: assessmentResult.gap,
+    interval: assessmentResult.interval,
     confidence,
     known: record.knownEvidence[0] ?? 'No opponent void had been proven yet.',
     inferred: record.inferredEvidence[0] ?? 'The hidden-hand model had no strong directional read yet.',
@@ -3199,16 +3312,17 @@ export function buildDeepReviewReport(
     const live = liveDecisions.get(recordId);
     const deep = deepDecisions.get(recordId);
     if (!live || !deep || !deepById.has(recordId)) return [];
-    const agreed = live.best.key === deep.best.key;
-    const runnerUp = deep.record.options.find((option) => option.key !== deep.best.key);
-    const recommendationInterval = runnerUp ? pairedDifference(deep.best, runnerUp).interval : null;
-    const recommendationIsUncertain = recommendationInterval ? recommendationInterval[0] <= 0 : false;
+    const agreed = live.plausibleBestKeys.some((key) => deep.plausibleBestKeys.includes(key));
+    const recommendationIsUncertain = deep.recommendationConfidence === 'uncertain';
     return [{
       recordId,
       analyzed: true,
       agreed,
+      exactTopAgreement: live.best.key === deep.best.key,
       liveBestKey: live.best.key,
       deepBestKey: deep.best.key,
+      livePlausibleBestKeys: [...live.plausibleBestKeys],
+      deepPlausibleBestKeys: [...deep.plausibleBestKeys],
       liveVerdict: live.verdict,
       deepVerdict: deep.verdict,
       liveWinRateGap: live.winRateGap,

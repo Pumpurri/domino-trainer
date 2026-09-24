@@ -290,6 +290,13 @@ function reviewMoveLabel(option: RoundReview['decisions'][number]['chosen']): st
   return `${option.tile.a}–${option.tile.b}${option.side ? ` on the ${option.side}` : ''}`;
 }
 
+function strongOptionLabels(decision: DecisionReview): string {
+  return decision.record.options
+    .filter((option) => decision.plausibleBestKeys.includes(option.key))
+    .map(reviewMoveLabel)
+    .join(' or ');
+}
+
 function verdictLabel(verdict: RoundReview['decisions'][number]['verdict']): string {
   if (verdict === 'best') return 'Best choice';
   if (verdict === 'close') return 'Too close to call';
@@ -336,7 +343,7 @@ function RoundReviewPanel({
         <span className="setup-kicker">500-sample reliability check</span>
         {deepReview.status === 'idle' && <><h3>Run Deep Review</h3><p>Recheck every meaningful choice across four CPU workers using 500 plausible hidden deals per decision.</p></>}
         {deepReview.status === 'running' && <><h3>Rechecking decision {deepReview.current} of {deepReview.total}</h3><p>{deepReview.completed} finished. You can cancel without losing the live report.</p><progress max={Math.max(1, deepReview.total)} value={deepReview.completed} /></>}
-        {deepReview.status === 'complete' && <><h3>{deepReview.report.agreed}/{deepReview.report.analyzed} recommendations agreed</h3><p>{deepReview.report.changedRecommendations} changed and {deepReview.report.unstableDecisions} were marked unstable. Deep results now power this report, Mistake Lab, progress, and export labels.</p></>}
+        {deepReview.status === 'complete' && <><h3>{deepReview.report.agreed}/{deepReview.report.analyzed} strong-option sets agreed</h3><p>{deepReview.report.changedRecommendations} had no shared strong option and {deepReview.report.unstableDecisions} were marked uncertain. Deep results now power this report, Mistake Lab, progress, and export labels.</p></>}
         {deepReview.status === 'cancelled' && <><h3>Deep Review cancelled</h3><p>The original live report is unchanged.</p></>}
         {deepReview.status === 'error' && <><h3>Deep Review could not finish</h3><p>{deepReview.message}</p></>}
       </div>
@@ -349,7 +356,7 @@ function RoundReviewPanel({
       <article className={`review-highlight ${review.biggestMistake ? 'mistake' : 'clean'}`}>
         <span>Largest lesson</span>
         {review.biggestMistake
-          ? <><h3>{reviewMoveLabel(review.biggestMistake.best)} was stronger</h3><p>You played {reviewMoveLabel(review.biggestMistake.chosen)}. The paired estimate favored the alternative by {Math.round(review.biggestMistake.winRateGap)} percentage points.</p><button className="practice-link" type="button" onClick={() => onPractice(review.biggestMistake!)}>Practice this decision</button></>
+          ? <><h3>{reviewMoveLabel(review.biggestMistake.best)} was stronger</h3><p>You played {reviewMoveLabel(review.biggestMistake.chosen)}. The paired estimate favored a strong option by {Math.round(review.biggestMistake.winRateGap)} percentage points across consistent evidence groups.</p><button className="practice-link" type="button" onClick={() => onPractice(review.biggestMistake!)}>Practice this decision</button></>
           : <><h3>No confident mistake found</h3><p>Your decisions were either the leading choice or too close for the simulations to judge honestly.</p></>}
       </article>
       <article className="review-highlight clean">
@@ -371,10 +378,13 @@ function RoundReviewPanel({
         </summary>
         <div className="evidence-grid">
           {comparison && <p className={`deep-comparison ${comparison.unstable ? 'unstable' : 'stable'}`}><strong>Live versus deep</strong>{comparison.agreed
-            ? `Both analyses preferred ${reviewMoveLabel(decision.best)}.${comparison.unstable ? ' The result is still statistically unstable, so treat it as uncertain.' : ' The deeper check supports the live recommendation.'}`
-            : `The live analysis preferred ${comparison.liveBestKey.split(':')[0].replace('-', '–')}, while Deep Review preferred ${comparison.deepBestKey.split(':')[0].replace('-', '–')}. Treat this position as unstable.`}</p>}
+            ? comparison.liveBestKey === comparison.deepBestKey
+              ? `Both analyses had ${reviewMoveLabel(decision.best)} as the top estimate.${comparison.unstable ? ' Other moves remain plausible, so treat the exact ranking as uncertain.' : ' The deeper check supports this recommendation.'}`
+              : `The top estimate changed, but the live and deep analyses still shared at least one strong option. Treat the exact ranking as uncertain.`
+            : `The live analysis led with ${comparison.liveBestKey.split(':')[0].replace('-', '–')}, while Deep Review led with ${comparison.deepBestKey.split(':')[0].replace('-', '–')}, and their strong-option sets did not overlap.`}</p>}
           <p><strong>Known</strong>{decision.known}</p>
           <p><strong>Inferred</strong>{decision.inferred}</p>
+          <p><strong>{decision.plausibleBestKeys.length > 1 ? 'Strong options' : 'Top option'}</strong>{strongOptionLabels(decision)}</p>
           <p><strong>Simulated</strong>{decision.simulated}</p>
           <p><strong>Uncertain</strong>{decision.uncertainty}</p>
           <p className="revealed-evidence"><strong>Revealed afterward</strong>{decision.revealed}</p>
@@ -443,6 +453,8 @@ function PracticeOverlay({
   const explanation = isMistake
     ? `${practice.decision.simulated} ${practice.decision.record.recommendationReason}`
     : practice.drill.explanation;
+  const acceptedKeys = isMistake ? practice.decision.plausibleBestKeys : [practice.drill.bestKey];
+  const acceptedOptions = options.filter((option) => acceptedKeys.includes(`${option.tile.id}:${option.side}`));
   return <div className="training-scrim">
     <section className="practice-overlay" aria-modal="true" role="dialog">
       <div className="training-overlay-header">
@@ -469,8 +481,8 @@ function PracticeOverlay({
           </div>
           {!practice.result && <p className="practice-privacy">{isMistake ? 'The opponents’ hands were regenerated from the same public evidence. Their real hands from the round are not reused.' : 'This drill isolates one repeatable table skill.'}</p>}
           {practice.result && <div className={`practice-result ${practice.result.correct ? 'correct' : 'incorrect'}`}>
-            <span>{practice.result.correct ? 'Correct decision' : 'Try to see the stronger route'}</span>
-            <h3>{practiceMoveLabel(options.find((option) => `${option.tile.id}:${option.side}` === (isMistake ? practice.decision.record.bestKey : practice.drill.bestKey))!)}</h3>
+            <span>{practice.result.correct ? 'Strong decision' : 'Try to see a stronger route'}</span>
+            <h3>{acceptedOptions.map(practiceMoveLabel).join(' or ')}</h3>
             <p>{explanation}</p>
             {practice.result.replay && <div className="reply-line">
               <b>One likely response on table P{practice.attempt + 1}</b>
@@ -956,10 +968,10 @@ export default function Home() {
 
   function choosePracticeMove(selectedKey: string) {
     if (!practiceState || practiceState.result) return;
-    const bestKey = practiceState.source === 'mistake'
-      ? practiceState.decision.record.bestKey
-      : practiceState.drill.bestKey;
-    const correct = selectedKey === bestKey;
+    const acceptedKeys = practiceState.source === 'mistake'
+      ? practiceState.decision.plausibleBestKeys
+      : [practiceState.drill.bestKey];
+    const correct = acceptedKeys.includes(selectedKey);
     const replay = practiceState.source === 'mistake'
       ? simulatePracticeReplies(practiceState.decision.record, selectedKey, practiceState.attempt)
       : null;

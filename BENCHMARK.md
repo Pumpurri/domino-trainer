@@ -630,3 +630,24 @@ Stratification changed 20.8% of middle recommendations. Its point estimates impr
 Those improvements did not make recommendations more consistently acceptable across five independent runs. Both policies achieved 47% repeat acceptability, while exact-top repeatability moved from 44% to 43%. The paired repeat interval was [-9, 9] percentage points. Because strict improvement was locked before opening the corpus, an exact tie fails even though every other quality, safety, computation, and routing check passed. Relaxing the gate after seeing the result would invalidate the holdout.
 
 This concludes the current stratified-sampling line without a product change. The evidence suggests a modest average middle-game benefit but not the stability improvement required for coaching. Further work should target the underlying belief model or recommendation stability rather than rerun the same sampler against a weaker post hoc gate. Complete evidence is stored in `benchmarks/deep-review-stratified-v1-160.json` and `benchmarks/deep-review-stratified-v1-160.md`.
+
+## Uncertainty-aware coaching protocol
+
+The next candidate leaves hidden-deal generation, simulation, move ranking, Rosa, and Tino unchanged. It changes how the coach communicates a statistically unresolved ranking. Every move whose paired comparison against the estimated leader either loses by no more than one point or has a 95% lower bound no greater than one point enters a strong-option set. Choosing any member is acceptable.
+
+A played move outside that set is called a mistake only when all of these conditions hold: at least four estimated win-rate points lost, a paired 95% lower bound above 1.5 points, the stronger option leads in at least three of four interleaved evidence groups, and at least two groups clear the 1.5-point practical margin. Otherwise the coach abstains with `Too close to call`. These thresholds are fixed from the earlier coaching-label development work rather than tuned on this validation corpus.
+
+The fresh seed `mesa-quince-uncertainty-coach-v1` supplies 200 positions, balanced across opening, middle, late, and likely-block play. Each position receives five independent runs at exactly 120 samples and five at exactly 500 samples. All runs are evaluated against an independently seeded 5,000-sample reference using the same uncertainty-aware policy. Opponent hands and sleeping tiles are replaced by placeholders before belief generation. Nine workers may evaluate different positions concurrently, but each position and repetition remains deterministic.
+
+The validation measures reference-top coverage, overlap with the reference strong-option set, improvement over the current forced single recommendation, repeat-set Jaccard similarity, whether all five repetitions retain a shared strong option, false accusations, three-way label agreement, mean set size, the rate at which every legal move is accepted, and runtime. Confidence intervals use 2,000 position-level bootstrap resamples.
+
+Both the 120- and 500-sample budgets must pass every locked check:
+
+- Reference-top coverage lower bound at least 90%.
+- Reference-set-overlap lower bound at least 95% and point estimate no worse than forced single-top coverage.
+- Shared-option repeatability lower bound at least 85% and pairwise set-similarity lower bound at least 70%.
+- False-accusation upper bound no more than 2% and point estimate no worse than the current label.
+- Mean strong-set-size upper bound no more than 2.5 and all-legal-set upper bound no more than 15%.
+- Multi-option-set lower bound at least 5%, proving the candidate was exercised.
+
+Passing both budgets authorizes the uncertainty-aware report, Mistake Lab acceptance, progress labels, and information-safe export fields. Failure at one budget limits any promotion to the budget that passes, followed by the complete automated test suite and production build.

@@ -1,9 +1,11 @@
 import {
+  assessDecisionOptions,
   analyzeMoves,
   applyMove,
   applyPass,
   chooseCasualMove,
   createBeliefState,
+  decisionOptionFromRatedMove,
   detectStrategicPhase,
   endsOf,
   engineTesting,
@@ -122,6 +124,11 @@ export function classifyAnalyzedChoice(ranked, playedKey) {
     gap: difference.gap,
     interval: difference.interval,
   };
+}
+
+export function classifyUncertaintyAwareChoice(ranked, playedKey) {
+  const options = ranked.map(decisionOptionFromRatedMove);
+  return assessDecisionOptions(options, moveKey(ranked[0]), playedKey);
 }
 
 function exactOracleKeys(game, maximumTiles = 15) {
@@ -345,6 +352,7 @@ export async function evaluateReliabilityPosition(position, {
   const referenceTopKey = moveKey(reference.ranked[0]);
   const referenceBestKeys = plausibleBestMoveKeys(reference.ranked, [reference.ranked], adaptiveRecommendationGap);
   const referenceChoice = classifyAnalyzedChoice(reference.ranked, position.playedKey);
+  const uncertaintyReferenceChoice = classifyUncertaintyAwareChoice(reference.ranked, position.playedKey);
   const referenceRates = new Map(reference.ranked.map((move) => [moveKey(move), move.winRate]));
   const referenceBestRate = reference.ranked[0].winRate;
   const exactKeys = exactOracleKeys(position.game);
@@ -361,6 +369,7 @@ export async function evaluateReliabilityPosition(position, {
         rolloutPolicy,
       );
       const choice = classifyAnalyzedChoice(analysis.ranked, position.playedKey);
+      const uncertaintyChoice = classifyUncertaintyAwareChoice(analysis.ranked, position.playedKey);
       trials.push(evaluatedTrial({
         repetition,
         ranked: analysis.ranked,
@@ -372,7 +381,10 @@ export async function evaluateReliabilityPosition(position, {
         referenceRates,
         referenceBestRate,
         exactKeys,
-        metadata: { recommendationKeys: [moveKey(analysis.ranked[0])] },
+        metadata: {
+          recommendationKeys: [moveKey(analysis.ranked[0])],
+          uncertaintyCoach: uncertaintyChoice,
+        },
       }));
     }
     byBudget[budget] = { trials };
@@ -533,6 +545,7 @@ export async function evaluateReliabilityPosition(position, {
         || pairedRatedMoveDifference(reference.ranked[0], reference.ranked[1]).interval[0] > 0,
       exactOracleAgreement: exactKeys ? exactKeys.includes(referenceTopKey) : null,
       elapsedMs: reference.elapsedMs,
+      uncertaintyCoach: uncertaintyReferenceChoice,
     },
     exactOracleKeys: exactKeys,
     budgets: byBudget,
