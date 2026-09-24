@@ -159,6 +159,58 @@ test('the explicit current rollout preserves the default analyzer exactly', () =
   assert.deepEqual(explicit, implicit);
 });
 
+test('the explicit systematic representative policy preserves the default analyzer exactly', () => {
+  const game = playingGame();
+  const beliefs = createBeliefState(game, 0, 180, undefined, 'representative-default-test');
+  const implicit = analyzeMoves(game, 180, beliefs, undefined, { representativeLimit: 60 });
+  const explicit = analyzeMoves(game, 180, beliefs, undefined, {
+    representativeLimit: 60,
+    representativePolicy: 'systematic',
+  });
+  assert.deepEqual(explicit, implicit);
+});
+
+test('public stratification preserves posterior mass and its full representative budget', () => {
+  const game = playingGame();
+  const beliefs = createBeliefState(game, 0, 300, undefined, 'stratified-mass-test');
+  const representatives = engineTesting.analysisRepresentatives(
+    beliefs.particles,
+    60,
+    game,
+    0,
+    'public-stratified',
+  );
+  const repeated = engineTesting.analysisRepresentatives(
+    beliefs.particles,
+    60,
+    game,
+    0,
+    'public-stratified',
+  );
+
+  assert.equal(representatives.length, 60);
+  assert.ok(Math.abs(representatives.reduce((sum, particle) => sum + particle.weight, 0) - 60) < 1e-9);
+  assert.deepEqual(representatives, repeated);
+  assert.ok(new Set(representatives.map((particle) => (
+    engineTesting.publicParticleStratum(game, particle, 0)
+  ))).size > 1);
+});
+
+test('public-stratified analysis cannot inspect real opponent tile identities', () => {
+  const ownHand = [tile(1, 5), tile(8, 9), tile(2, 2)];
+  const deck = fullSet().filter(({ id }) => ![...ownHand.map(({ id }) => id), '1-9'].includes(id));
+  const base = playingGame({ hands: [ownHand, deck.slice(0, 5), deck.slice(5, 10)], chain: [placed('1-9', 1, 9)] });
+  const alternate = { ...base, hands: [ownHand, deck.slice(15, 20), deck.slice(25, 30)] };
+  const summarize = (game) => {
+    const beliefs = createBeliefState(game, 0, 180, undefined, 'stratified-hidden-safety');
+    return analyzeMoves(game, 180, beliefs, undefined, {
+      representativeLimit: 60,
+      representativePolicy: 'public-stratified',
+    });
+  };
+  assert.deepEqual(summarize(base), summarize(alternate));
+});
+
 test('persistent beliefs ignore the real hidden tile identities and survive unchanged state', () => {
   const ownHand = [tile(1, 5), tile(8, 9), tile(2, 2)];
   const deck = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));

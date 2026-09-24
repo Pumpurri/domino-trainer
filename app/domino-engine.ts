@@ -41,6 +41,7 @@ export type Difficulty = 'casual' | 'strong';
 export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
 export type RolloutPolicy = 'current' | 'exhaustive-forecast' | 'mixed' | 'stochastic-top-two';
 export type AnalyzerRolloutPolicy = Extract<RolloutPolicy, 'current' | 'exhaustive-forecast'>;
+export type RepresentativePolicy = 'systematic' | 'public-stratified';
 export type StrategyContext = {
   phase: StrategicPhase;
   chainLength: number;
@@ -257,6 +258,7 @@ export type AnalysisOptions = {
   shardCount?: number;
   rootCandidateKeys?: readonly string[];
   rolloutPolicy?: AnalyzerRolloutPolicy;
+  representativePolicy?: RepresentativePolicy;
 };
 
 type WeightedSample = BeliefParticle;
@@ -1141,6 +1143,117 @@ function representativeParticles(particles: BeliefParticle[], count: number): Be
     target += step;
   }
   return representatives;
+}
+
+function particleOwnerOfTile(
+  particle: BeliefParticle,
+  game: Game,
+  tileId: string,
+  perspective: number,
+): string {
+  const owner = particle.hands.findIndex((hand) => hand.some((tile) => tile.id === tileId));
+  if (owner >= 0) return owner === perspective ? 'self' : `p${owner}`;
+  if (game.chain.some((tile) => tile.id === tileId)) return 'played';
+  return 'sleep';
+}
+
+function publicParticleStratum(game: Game, particle: BeliefParticle, perspective: number): string {
+  const [left, right] = endsOf(game.chain);
+  if (left === null || right === null) return 'empty-board';
+  const opponents = [0, 1, 2].filter((player) => player !== perspective);
+  const playability = opponents.map((player) => {
+    const hand = particle.hands[player];
+    const leftPlayable = hand.some((tile) => tile.a === left || tile.b === left);
+    const rightPlayable = hand.some((tile) => tile.a === right || tile.b === right);
+    const mask = (leftPlayable ? 1 : 0) + (rightPlayable ? 2 : 0);
+    const exit = hand.length === 1 && mask > 0 ? 1 : 0;
+    return `p${player}:${mask}:${exit}`;
+  });
+  const controllerIds = [...new Set([left, right])].map((value) => `${value}-${value}`);
+  const controllers = controllerIds.map((tileId) => (
+    `${tileId}:${particleOwnerOfTile(particle, game, tileId, perspective)}`
+  ));
+  return [...playability, ...controllers].join('|');
+}
+
+function proportionalStratifiedRepresentatives(
+  particles: BeliefParticle[],
+  count: number,
+  game: Game,
+  perspective: number,
+): BeliefParticle[] {
+  if (particles.length <= count) return particles;
+  const normalized = normalizeParticleWeights(particles);
+  const normalizedTotal = normalized.reduce((sum, particle) => sum + particle.weight, 0);
+  const grouped = new Map<string, BeliefParticle[]>();
+  normalized.forEach((particle) => {
+    const stratum = publicParticleStratum(game, particle, perspective);
+    const group = grouped.get(stratum) ?? [];
+    group.push(particle);
+    grouped.set(stratum, group);
+  });
+  let entries = [...grouped.entries()];
+  if (entries.length > count) {
+    const ranked = entries
+      .map(([key, members]) => ({
+        key,
+        members,
+        mass: members.reduce((sum, particle) => sum + particle.weight, 0) / normalizedTotal,
+      }))
+      .sort((left, right) => right.mass - left.mass || left.key.localeCompare(right.key));
+    const retained = ranked.slice(0, Math.max(0, count - 1));
+    const overflow = ranked.slice(Math.max(0, count - 1)).flatMap(({ members }) => members);
+    entries = [
+      ...retained.map(({ key, members }) => [key, members] as [string, BeliefParticle[]]),
+      ['other', overflow],
+    ];
+  }
+  const remainingBudget = count - entries.length;
+  const strata = entries.map(([key, members]) => {
+    const mass = members.reduce((sum, particle) => sum + particle.weight, 0) / normalizedTotal;
+    const exactAllocation = mass * remainingBudget;
+    return {
+      key,
+      members,
+      mass,
+      allocation: 1 + Math.floor(exactAllocation),
+      remainder: exactAllocation - Math.floor(exactAllocation),
+    };
+  });
+  let allocated = strata.reduce((sum, stratum) => sum + stratum.allocation, 0);
+  [...strata]
+    .sort((left, right) => right.remainder - left.remainder || left.key.localeCompare(right.key))
+    .slice(0, count - allocated)
+    .forEach((stratum) => {
+      stratum.allocation += 1;
+      allocated += 1;
+    });
+  if (allocated !== count) throw new Error('Stratified representative allocation did not fill its budget.');
+
+  return strata
+    .filter((stratum) => stratum.allocation > 0)
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .flatMap((stratum) => {
+      const conditional = stratum.members.map((particle) => ({
+        ...particle,
+        weight: particle.weight / (stratum.mass * normalizedTotal),
+      }));
+      const selected = systematicResample(conditional, stratum.allocation, () => 0.5);
+      const representativeWeight = count * stratum.mass / stratum.allocation;
+      return selected.map((particle) => ({ ...particle, weight: representativeWeight }));
+    });
+}
+
+function analysisRepresentatives(
+  particles: BeliefParticle[],
+  count: number,
+  game: Game,
+  perspective: number,
+  policy: RepresentativePolicy = 'systematic',
+): BeliefParticle[] {
+  return policy === 'public-stratified'
+    ? proportionalStratifiedRepresentatives(particles, count, game, perspective)
+    : representativeParticles(particles, count);
 }
 
 function beliefSeed(game: Game, perspective: number, label: string): string {
@@ -2478,7 +2591,17 @@ function analyzeMovesForPlayer(
     if (representativeOffset + representativeLimit > representativePoolSize) {
       throw new Error('Representative analysis window exceeds its shared pool.');
     }
-    const representativePool = representativeParticles(persistentParticles, representativePoolSize);
+    if (options?.representativePolicy === 'public-stratified'
+      && (representativeOffset !== 0 || representativeLimit !== representativePoolSize)) {
+      throw new Error('Public-stratified representatives must be analyzed as one complete weighted pool.');
+    }
+    const representativePool = analysisRepresentatives(
+      persistentParticles,
+      representativePoolSize,
+      game,
+      perspective,
+      options?.representativePolicy,
+    );
     if (representativePool.length < representativePoolSize) {
       throw new Error('Belief state does not contain enough particles for the requested representative pool.');
     }
@@ -3108,4 +3231,12 @@ export function buildDeepReviewReport(
   };
 }
 
-export const engineTesting = { legalMovesForEnds, analyzeMovesForPlayer, solveEndgame, rolloutWinner, outcomeUtility };
+export const engineTesting = {
+  legalMovesForEnds,
+  analyzeMovesForPlayer,
+  solveEndgame,
+  rolloutWinner,
+  outcomeUtility,
+  analysisRepresentatives,
+  publicParticleStratum,
+};

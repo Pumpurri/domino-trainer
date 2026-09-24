@@ -33,6 +33,8 @@
     "benchmark:rollout-policies:quick": "node --experimental-strip-types scripts/benchmark-rollout-policies.mjs --quick",
     "benchmark:analyzer-rollout": "node --experimental-strip-types scripts/benchmark-analyzer-rollout.mjs --positions-per-phase=50 --repetitions=3 --adaptive-stages=120,250,500,1000,2000 --reference-samples=5000 --confidence-resamples=1000 --workers=9 --seed=mesa-quince-analyzer-rollout-v1 --checkpoint=outputs/analyzer-rollout-v1-200.checkpoint --json=outputs/analyzer-rollout-v1-200.json --report=outputs/analyzer-rollout-v1-200.md",
     "benchmark:analyzer-rollout:quick": "node --experimental-strip-types scripts/benchmark-analyzer-rollout.mjs --quick",
+    "benchmark:stratified-sampling": "node --experimental-strip-types scripts/benchmark-stratified-sampling.mjs --positions-per-group=24 --repetitions=3 --stages=120,250,500,1000,2000 --reference-samples=5000 --forensic-samples=500 --confidence-resamples=1000 --opening-minimum-branching=6 --middle-minimum-branching=4 --workers=9 --seed=mesa-quince-stratified-sampling-v1 --checkpoint=outputs/stratified-sampling-v1-48.checkpoint --json=outputs/stratified-sampling-v1-48.json --report=outputs/stratified-sampling-v1-48.md",
+    "benchmark:stratified-sampling:quick": "node --experimental-strip-types scripts/benchmark-stratified-sampling.mjs --quick",
     "benchmark:v6:forensics": "node scripts/analyze-v6-changes.mjs",
     "benchmark:reliability:audit-labels": "node scripts/audit-coaching-labels.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"

@@ -478,3 +478,36 @@ Only 3.8% of recommendations changed, below the locked 5% exercise threshold. Cr
 The high-budget current and exhaustive references agreed on 98% of positions. Differences concentrated in opening and middle play, where the candidate changed 6.0% and 7.3% of choices but slightly increased cross-reference regret. Late and likely-block changes were rare and slightly favorable. Exhaustive forecasting cost 12.4% more mean wall time, comfortably inside the 75% ceiling, so speed was not the reason for rejection.
 
 This result explains the earlier self-play gain without contradicting it: exhaustive forecasting is a stronger standalone move policy, but replacing simulated rollout choices barely changes the analyzer's root recommendations and does not improve their reference-robust quality. The live analyzer remains on the current shortlist-plus-forecast rollout. The complete evidence is stored in `benchmarks/analyzer-rollout-v1-200.json` and `benchmarks/analyzer-rollout-v1-200.md`.
+
+### Public-information stratified sampling protocol
+
+The next development study targets root sampling variance. It does not change beliefs, rollout policy, adaptive stopping, recommendation selection, Rosa, Tino, or the live coach. The candidate partitions each independently generated belief pool using only public state and the plausible hidden deal represented by each particle:
+
+- whether Rosa can play the left end, right end, both, or neither;
+- whether Tino can play the left end, right end, both, or neither;
+- whether either opponent has an immediate one-tile exit;
+- whether each open-end double is sampled with Rosa, Tino, the user, already played, or sleeping.
+
+Every retained stratum keeps its posterior probability through explicit analysis weights. Small strata receive representation without being treated as more probable than the belief model says. If there are more strata than samples, the lowest-mass tail is sampled as one combined overflow stratum. The real opponent hands and real sleepers are replaced before belief generation and are never available to either analyzer.
+
+The fresh seed `mesa-quince-stratified-sampling-v1` supplies 48 difficult positions: 24 openings with at least six legal moves and 24 middle-game positions with at least four. Current systematic sampling and public-information stratification receive the same independently generated belief pool at every adaptive stage. Each position receives three repetitions at 120, 250, 500, 1,000, and 2,000 cumulative samples, plus an independent 5,000-sample systematic reference.
+
+A separate 500-sample root-value audit records, for the reference-leading move and runner-up, the posterior mass, conditional win rates, and contribution of every represented public-information stratum. It also compares how much posterior mass the current and candidate representatives cover. This audit explains where root values come from but does not change the promotion metrics.
+
+All checks below are locked before opening the full corpus. The candidate passes only if every check succeeds:
+
+- At least 5% of recommendations change, proving the candidate was exercised.
+- Repeat acceptability improves.
+- Mean reference regret declines.
+- False-positive mistake calls do not increase.
+- Mistake-label agreement declines by no more than one percentage point.
+- Mean sample use does not increase.
+- In both opening and middle play, within-one-point quality declines by no more than two percentage points, regret rises by no more than 0.03 point, and repeat acceptability declines by no more than three percentage points.
+
+Passing this 48-position diagnostic authorizes a fresh, balanced 200-position validation. It does not directly change the live analyzer. Failing any check retires this stratification design or sends it back to a new preregistered development version.
+
+```sh
+caffeinate -i npm run benchmark:stratified-sampling
+```
+
+The run uses nine workers and atomic per-position checkpoints at `outputs/stratified-sampling-v1-48.checkpoint`. Add `-- --resume` after an interruption.
