@@ -608,3 +608,25 @@ caffeinate -i npm run benchmark:deep-review-stratified
 ```
 
 The run uses nine workers and atomic checkpoints at `outputs/deep-review-stratified-v1-160.checkpoint`. Add `-- --resume` after interruption.
+
+### Deep Review-only middle stratification holdout result
+
+The complete holdout evaluated 100 fresh middle positions with five repetitions each, plus 60 non-middle safety positions. The candidate passed 11 of 12 locked checks but failed the requirement that repeat acceptability improve. It is not promoted and all product sampler behavior remains unchanged.
+
+| Measure | Current systematic | Middle stratified |
+| --- | ---: | ---: |
+| Within one point under both references | 79.0% | 80.8% |
+| Mean two-reference regret | 0.463 | 0.427 |
+| Mean worst-reference regret | 0.609 | 0.547 |
+| Repeat acceptability | 47.0% | 47.0% |
+| Exact-top repeatability | 44.0% | 43.0% |
+| Mean two-reference label agreement | 88.5% | 89.5% |
+| Conservative false-positive mistakes | 5.0% | 3.6% |
+| Effective samples | 500.0 | 495.9 |
+| Mean runtime | 4,021 ms | 4,019 ms |
+
+Stratification changed 20.8% of middle recommendations. Its point estimates improved within-both-reference quality by 1.8 percentage points, reduced average regret by 0.036 point, reduced worst-reference regret by 0.061 point, improved label agreement by one point, and reduced conservative false accusations by 1.4 points. Mean paired runtime was 0.3% lower and all 60 non-middle positions reused control exactly. Both independent 5,000-sample references chose the same top move on 87% of positions.
+
+Those improvements did not make recommendations more consistently acceptable across five independent runs. Both policies achieved 47% repeat acceptability, while exact-top repeatability moved from 44% to 43%. The paired repeat interval was [-9, 9] percentage points. Because strict improvement was locked before opening the corpus, an exact tie fails even though every other quality, safety, computation, and routing check passed. Relaxing the gate after seeing the result would invalidate the holdout.
+
+This concludes the current stratified-sampling line without a product change. The evidence suggests a modest average middle-game benefit but not the stability improvement required for coaching. Further work should target the underlying belief model or recommendation stability rather than rerun the same sampler against a weaker post hoc gate. Complete evidence is stored in `benchmarks/deep-review-stratified-v1-160.json` and `benchmarks/deep-review-stratified-v1-160.md`.
