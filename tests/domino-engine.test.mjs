@@ -215,6 +215,62 @@ test('public-stratified analysis cannot inspect real opponent tile identities', 
   assert.deepEqual(summarize(base), summarize(alternate));
 });
 
+test('opening balance sampling is deterministic, weighted, and fills its exact budget', () => {
+  const deck = fullSet();
+  const game = playingGame({
+    hands: [deck.slice(0, 10), deck.slice(10, 20), deck.slice(20, 30)],
+    chain: [],
+  });
+  const beliefs = createBeliefState(game, 0, 600, undefined, 'opening-balance-invariants');
+  const policies = [
+    'opening-response-balanced-35',
+    'opening-response-balanced-60',
+    'opening-return-balanced-35',
+    'opening-return-balanced-60',
+  ];
+  for (const policy of policies) {
+    const first = engineTesting.analysisRepresentatives(beliefs.particles, 120, game, 0, policy);
+    const repeated = engineTesting.analysisRepresentatives(beliefs.particles, 120, game, 0, policy);
+    assert.equal(first.length, 120, policy);
+    assert.deepEqual(first, repeated, policy);
+    assert.ok(first.every((particle) => Number.isFinite(particle.weight) && particle.weight > 0), policy);
+    const totalWeight = first.reduce((sum, particle) => sum + particle.weight, 0);
+    const squaredWeight = first.reduce((sum, particle) => sum + particle.weight ** 2, 0);
+    assert.ok(totalWeight ** 2 / squaredWeight >= 60, policy);
+  }
+
+  const systematic = engineTesting.analysisRepresentatives(beliefs.particles, 120, game, 0, 'systematic');
+  const zeroStrength = engineTesting.openingBalancedRepresentatives(
+    beliefs.particles,
+    120,
+    game,
+    0,
+    'response',
+    0,
+  );
+  assert.deepEqual(zeroStrength, systematic);
+  const moves = legalMovesFor(game.hands[0], game.chain);
+  assert.ok(new Set(beliefs.particles.map((particle) => moves.map((move) => (
+    engineTesting.openingResponseCategory(game, particle, 0, move, 'return')
+  )).join('||'))).size > 1);
+});
+
+test('opening-balanced analysis cannot inspect real opponent tile identities', () => {
+  const deck = fullSet();
+  const ownHand = deck.slice(0, 10);
+  const base = playingGame({ hands: [ownHand, deck.slice(10, 20), deck.slice(20, 30)], chain: [] });
+  const alternate = { ...base, hands: [ownHand, deck.slice(30, 40), deck.slice(40, 50)] };
+  const summarize = (game) => {
+    const beliefs = createBeliefState(game, 0, 240, undefined, 'opening-balanced-hidden-safety');
+    return analyzeMoves(game, 240, beliefs, undefined, {
+      representativeLimit: 60,
+      representativePolicy: 'opening-return-balanced-35',
+      extraTreeSearch: 'disabled',
+    });
+  };
+  assert.deepEqual(summarize(base), summarize(alternate));
+});
+
 test('persistent beliefs ignore the real hidden tile identities and survive unchanged state', () => {
   const ownHand = [tile(1, 5), tile(8, 9), tile(2, 2)];
   const deck = fullSet().filter(({ id }) => ![...ownHand.map((candidate) => candidate.id), '1-9'].includes(id));

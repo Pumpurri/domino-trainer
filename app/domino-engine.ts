@@ -41,7 +41,13 @@ export type Difficulty = 'casual' | 'strong';
 export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
 export type RolloutPolicy = 'current' | 'exhaustive-forecast' | 'mixed' | 'stochastic-top-two';
 export type AnalyzerRolloutPolicy = Extract<RolloutPolicy, 'current' | 'exhaustive-forecast'>;
-export type RepresentativePolicy = 'systematic' | 'public-stratified';
+export type RepresentativePolicy =
+  | 'systematic'
+  | 'public-stratified'
+  | 'opening-response-balanced-35'
+  | 'opening-response-balanced-60'
+  | 'opening-return-balanced-35'
+  | 'opening-return-balanced-60';
 export type ExtraTreeSearchPolicy = 'current' | 'disabled';
 export type StrategyContext = {
   phase: StrategicPhase;
@@ -1287,6 +1293,146 @@ function proportionalStratifiedRepresentatives(
     });
 }
 
+type OpeningBalanceMode = 'response' | 'return';
+
+function responseMask(hand: Tile[], left: number, right: number): number {
+  const leftPlayable = hand.some((tile) => matchesValue(tile, left));
+  const rightPlayable = hand.some((tile) => matchesValue(tile, right));
+  return (leftPlayable ? 1 : 0) + (rightPlayable ? 2 : 0);
+}
+
+function replyCountBucket(hand: Tile[], left: number, right: number): string {
+  const count = hand.filter((tile) => matchesValue(tile, left) || matchesValue(tile, right)).length;
+  return count >= 2 ? '2+' : String(count);
+}
+
+function returnPathBucket(
+  opponentHand: Tile[],
+  ownRemaining: Tile[],
+  left: number,
+  right: number,
+): string {
+  const replyOutcomes: boolean[] = [];
+  for (const tile of opponentHand) {
+    const ends = left === right
+      ? [{ matched: left, unchanged: right }]
+      : [{ matched: left, unchanged: right }, { matched: right, unchanged: left }];
+    for (const { matched, unchanged } of ends) {
+      if (!matchesValue(tile, matched)) continue;
+      const exposed = tile.a === matched ? tile.b : tile.a;
+      replyOutcomes.push(ownRemaining.some((candidate) => (
+        matchesValue(candidate, exposed) || matchesValue(candidate, unchanged)
+      )));
+    }
+  }
+  if (!replyOutcomes.length) return 'none';
+  const returnable = replyOutcomes.filter(Boolean).length;
+  if (returnable === 0) return 'zero';
+  if (returnable === replyOutcomes.length) return 'all';
+  return 'some';
+}
+
+function openingResponseCategory(
+  game: Game,
+  particle: BeliefParticle,
+  perspective: number,
+  move: Move,
+  mode: OpeningBalanceMode,
+): string {
+  const next = (perspective + 1) % 3;
+  const other = (perspective + 2) % 3;
+  const left = move.newLeft;
+  const right = move.newRight;
+  const nextHand = particle.hands[next];
+  const otherHand = particle.hands[other];
+  const nextMask = responseMask(nextHand, left, right);
+  const otherMask = responseMask(otherHand, left, right);
+  const voidCount = Number(nextMask === 0) + Number(otherMask === 0);
+  const controllers = [...new Set([left, right])]
+    .map((value) => particleOwnerOfTile(particle, game, `${value}-${value}`, perspective))
+    .join(',');
+  const response = [
+    `n:${nextMask}:${replyCountBucket(nextHand, left, right)}`,
+    `o:${otherMask}:${replyCountBucket(otherHand, left, right)}`,
+    `v:${voidCount}`,
+    `c:${controllers}`,
+  ];
+  if (mode === 'response') return response.join('|');
+  const ownRemaining = game.hands[perspective].filter((tile) => tile.id !== move.tile.id);
+  response.push(
+    `rn:${returnPathBucket(nextHand, ownRemaining, left, right)}`,
+    `ro:${returnPathBucket(otherHand, ownRemaining, left, right)}`,
+  );
+  return response.join('|');
+}
+
+function openingBalancedRepresentatives(
+  particles: BeliefParticle[],
+  count: number,
+  game: Game,
+  perspective: number,
+  mode: OpeningBalanceMode,
+  balanceStrength: number,
+): BeliefParticle[] {
+  if (!particles.length || count <= 0) return [];
+  if (particles.length <= count || balanceStrength <= 0) return representativeParticles(particles, count);
+  const moves = legalMovesFor(game.hands[perspective], game.chain);
+  if (!moves.length) return representativeParticles(particles, count);
+  const normalized = normalizeParticleWeights(particles);
+  const total = normalized.reduce((sum, particle) => sum + particle.weight, 0);
+  const posterior = normalized.map((particle) => particle.weight / total);
+  const proposal = normalized.map(() => 0);
+
+  for (const move of moves) {
+    const categories = normalized.map((particle) => (
+      openingResponseCategory(game, particle, perspective, move, mode)
+    ));
+    const categoryMass = new Map<string, number>();
+    categories.forEach((category, index) => {
+      categoryMass.set(category, (categoryMass.get(category) ?? 0) + posterior[index]);
+    });
+    const balancedMass = 1 / categoryMass.size;
+    categories.forEach((category, index) => {
+      const mass = categoryMass.get(category)!;
+      const targetMass = (1 - balanceStrength) * mass + balanceStrength * balancedMass;
+      proposal[index] += posterior[index] / mass * targetMass / moves.length;
+    });
+  }
+
+  const proposalTotal = proposal.reduce((sum, weight) => sum + weight, 0);
+  const normalizedProposal = proposal.map((weight) => weight / proposalTotal);
+  const cumulative: number[] = [];
+  normalizedProposal.reduce((sum, weight) => {
+    const next = sum + weight;
+    cumulative.push(next);
+    return next;
+  }, 0);
+  const representatives: BeliefParticle[] = [];
+  const step = 1 / count;
+  let target = step / 2;
+  let particleIndex = 0;
+  for (let index = 0; index < count; index += 1) {
+    while (particleIndex < cumulative.length - 1 && target > cumulative[particleIndex]) particleIndex += 1;
+    const importanceWeight = posterior[particleIndex] / normalizedProposal[particleIndex];
+    representatives.push({ hands: normalized[particleIndex].hands, weight: importanceWeight });
+    target += step;
+  }
+  return representatives;
+}
+
+function openingBalancePolicy(policy: RepresentativePolicy): {
+  mode: OpeningBalanceMode;
+  strength: number;
+} | null {
+  switch (policy) {
+    case 'opening-response-balanced-35': return { mode: 'response', strength: 0.35 };
+    case 'opening-response-balanced-60': return { mode: 'response', strength: 0.6 };
+    case 'opening-return-balanced-35': return { mode: 'return', strength: 0.35 };
+    case 'opening-return-balanced-60': return { mode: 'return', strength: 0.6 };
+    default: return null;
+  }
+}
+
 function analysisRepresentatives(
   particles: BeliefParticle[],
   count: number,
@@ -1294,9 +1440,21 @@ function analysisRepresentatives(
   perspective: number,
   policy: RepresentativePolicy = 'systematic',
 ): BeliefParticle[] {
-  return policy === 'public-stratified'
-    ? proportionalStratifiedRepresentatives(particles, count, game, perspective)
-    : representativeParticles(particles, count);
+  if (policy === 'public-stratified') {
+    return proportionalStratifiedRepresentatives(particles, count, game, perspective);
+  }
+  const openingPolicy = openingBalancePolicy(policy);
+  if (openingPolicy) {
+    return openingBalancedRepresentatives(
+      particles,
+      count,
+      game,
+      perspective,
+      openingPolicy.mode,
+      openingPolicy.strength,
+    );
+  }
+  return representativeParticles(particles, count);
 }
 
 function beliefSeed(game: Game, perspective: number, label: string): string {
@@ -2635,9 +2793,10 @@ function analyzeMovesForPlayer(
     if (representativeOffset + representativeLimit > representativePoolSize) {
       throw new Error('Representative analysis window exceeds its shared pool.');
     }
-    if (options?.representativePolicy === 'public-stratified'
+    if (options?.representativePolicy !== undefined
+      && options.representativePolicy !== 'systematic'
       && (representativeOffset !== 0 || representativeLimit !== representativePoolSize)) {
-      throw new Error('Public-stratified representatives must be analyzed as one complete weighted pool.');
+      throw new Error('Weighted representatives must be analyzed as one complete pool.');
     }
     const representativePool = analysisRepresentatives(
       persistentParticles,
@@ -3482,4 +3641,6 @@ export const engineTesting = {
   outcomeUtility,
   analysisRepresentatives,
   publicParticleStratum,
+  openingResponseCategory,
+  openingBalancedRepresentatives,
 };
