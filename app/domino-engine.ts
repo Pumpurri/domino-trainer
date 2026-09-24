@@ -40,6 +40,7 @@ export type Game = {
 export type Difficulty = 'casual' | 'strong';
 export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
 export type RolloutPolicy = 'current' | 'exhaustive-forecast' | 'mixed' | 'stochastic-top-two';
+export type AnalyzerRolloutPolicy = Extract<RolloutPolicy, 'current' | 'exhaustive-forecast'>;
 export type StrategyContext = {
   phase: StrategicPhase;
   chainLength: number;
@@ -255,6 +256,7 @@ export type AnalysisOptions = {
   shardIndex?: number;
   shardCount?: number;
   rootCandidateKeys?: readonly string[];
+  rolloutPolicy?: AnalyzerRolloutPolicy;
 };
 
 type WeightedSample = BeliefParticle;
@@ -1658,9 +1660,9 @@ function rankedRolloutMoves({
   context: StrategyContext;
   playedTiles: Tile[];
   style?: OpponentStyleProfile;
-}): Array<{ move: Move; score: number }> {
+}, exhaustive = false): Array<{ move: Move; score: number }> {
   const adjustedScores = styleAdjustedScores(legal, hand, voids, current, handSizes, context, style);
-  const candidates = legal.length <= 3
+  const candidates = exhaustive || legal.length <= 3
     ? legal
     : legal
       .map((move, index) => ({ move, score: adjustedScores[index] }))
@@ -1691,9 +1693,12 @@ function rankedRolloutMoves({
     .sort((left, right) => right.score - left.score);
 }
 
-function selectRolloutMove(options: Parameters<typeof rankedRolloutMoves>[0]): Move {
+function selectRolloutMove(
+  options: Parameters<typeof rankedRolloutMoves>[0],
+  policy: AnalyzerRolloutPolicy = 'current',
+): Move {
   if (options.legal.length === 1) return options.legal[0];
-  return rankedRolloutMoves(options)[0].move;
+  return rankedRolloutMoves(options, policy === 'exhaustive-forecast')[0].move;
 }
 
 export function chooseRolloutPolicyMove(
@@ -1735,6 +1740,7 @@ function rolloutWinner(
   sampledHands: Tile[][],
   perspective: number,
   styles?: OpponentStyleProfile[],
+  rolloutPolicy: AnalyzerRolloutPolicy = 'current',
 ): RolloutOutcome {
   const hands = sampledHands.map((hand) => [...hand]);
   hands[perspective] = hands[perspective].filter((tile) => tile.id !== firstMove.tile.id);
@@ -1778,7 +1784,7 @@ function rolloutWinner(
         context,
         playedTiles,
         style: styleForPlayer(styles, current),
-      });
+      }, rolloutPolicy);
       passes = 0;
       hands[current] = hands[current].filter((tile) => tile.id !== move.tile.id);
       playedTiles.push(move.tile);
@@ -2045,10 +2051,11 @@ function choosePlayoutMove(
   legal: Move[],
   cache: Map<string, string>,
   styles?: OpponentStyleProfile[],
+  rolloutPolicy: AnalyzerRolloutPolicy = 'current',
 ): Move {
   const style = styleForPlayer(styles, view.current);
   const styleKey = style ? `${style.player}:${style.observedChoices}:${style.highPipTendency.toFixed(2)}:${style.doubleTendency.toFixed(2)}:${style.controlTendency.toFixed(2)}:${style.blockTendency.toFixed(2)}` : 'default';
-  const key = `${informationSetKey(view)}|${styleKey}`;
+  const key = `${informationSetKey(view)}|${styleKey}|${rolloutPolicy}`;
   const cachedMove = cache.get(key);
   if (cachedMove) {
     const match = legal.find((move) => moveKey(move) === cachedMove);
@@ -2064,7 +2071,7 @@ function choosePlayoutMove(
     context,
     playedTiles: view.playedTiles,
     style,
-  });
+  }, rolloutPolicy);
   cache.set(key, moveKey(selected));
   return selected;
 }
@@ -2073,12 +2080,20 @@ function finishPlayout(
   state: SearchSimulationState,
   cache: Map<string, string>,
   styles?: OpponentStyleProfile[],
+  rolloutPolicy: AnalyzerRolloutPolicy = 'current',
 ): RolloutOutcome {
   for (let turn = 0; turn < 80; turn += 1) {
     const actorHand = state.hands[state.current];
     const legal = legalMovesForEnds(actorHand, state.left, state.right);
     const outcome = legal.length
-      ? applySimulationMove(state, choosePlayoutMove(publicSimulationView(state, state.current), actorHand, legal, cache, styles))
+      ? applySimulationMove(state, choosePlayoutMove(
+        publicSimulationView(state, state.current),
+        actorHand,
+        legal,
+        cache,
+        styles,
+        rolloutPolicy,
+      ))
       : applySimulationPass(state);
     if (outcome) return outcome;
   }
@@ -2092,6 +2107,7 @@ function evaluateRootMove(
   move: Move,
   rolloutCache: Map<string, string>,
   styles?: OpponentStyleProfile[],
+  rolloutPolicy: AnalyzerRolloutPolicy = 'current',
 ): RolloutOutcome {
   const state = simulationState(game, particle.hands);
   let outcome = applySimulationMove(state, move);
@@ -2100,7 +2116,7 @@ function evaluateRootMove(
     state.left,
     state.right,
   ).length === 0;
-  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles);
+  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles, rolloutPolicy);
   return { ...outcome, nextPlayerPassed: Boolean(nextPlayerPassed) };
 }
 
@@ -2183,6 +2199,7 @@ function runInformationSetIteration({
   forcedRootAction,
   treePairIndex,
   styles,
+  rolloutPolicy,
 }: {
   game: Game;
   perspective: number;
@@ -2193,6 +2210,7 @@ function runInformationSetIteration({
   forcedRootAction: string;
   treePairIndex?: number;
   styles?: OpponentStyleProfile[];
+  rolloutPolicy: AnalyzerRolloutPolicy;
 }): { deepestPly: number; treePlies: number; revisitedActions: number } {
   const state = simulationState(game, particle.hands);
   const path: Array<{ node: InformationSetNode; action: TreeActionStats }> = [];
@@ -2215,7 +2233,14 @@ function runInformationSetIteration({
 
     const view = publicSimulationView(state, actor);
     if (actor !== perspective) {
-      outcome = applySimulationMove(state, choosePlayoutMove(view, actorHand, legal, rolloutCache, styles));
+      outcome = applySimulationMove(state, choosePlayoutMove(
+        view,
+        actorHand,
+        legal,
+        rolloutCache,
+        styles,
+        rolloutPolicy,
+      ));
       continue;
     }
     const key = informationSetKey(view);
@@ -2239,9 +2264,9 @@ function runInformationSetIteration({
     if (atRoot && !outcome) {
       nextPlayerPassed = legalMovesForEnds(state.hands[state.current], state.left, state.right).length === 0;
     }
-    if (selected.expanded && !outcome) outcome = finishPlayout(state, rolloutCache, styles);
+    if (selected.expanded && !outcome) outcome = finishPlayout(state, rolloutCache, styles, rolloutPolicy);
   }
-  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles);
+  if (!outcome) outcome = finishPlayout(state, rolloutCache, styles, rolloutPolicy);
 
   const utilities = outcomeUtility(outcome);
   path.forEach(({ node, action }) => {
@@ -2302,6 +2327,7 @@ function informationSetMonteCarloSearch(
   moves: Move[],
   particles: BeliefParticle[],
   styles?: OpponentStyleProfile[],
+  rolloutPolicy: AnalyzerRolloutPolicy = 'current',
 ): InformationSetSearchResult {
   const tree = new Map<string, InformationSetNode>();
   const rolloutCache = new Map<string, string>();
@@ -2334,7 +2360,16 @@ function informationSetMonteCarloSearch(
 
   const recordIteration = (particle: BeliefParticle, forcedRootAction: string, treePairIndex?: number) => {
     const result = runInformationSetIteration({
-      game, perspective, particle, tree, rootOutcomes, rolloutCache, forcedRootAction, treePairIndex, styles,
+      game,
+      perspective,
+      particle,
+      tree,
+      rootOutcomes,
+      rolloutCache,
+      forcedRootAction,
+      treePairIndex,
+      styles,
+      rolloutPolicy,
     });
     deepestPly = Math.max(deepestPly, result.deepestPly);
     totalTreePlies += result.treePlies;
@@ -2345,7 +2380,15 @@ function informationSetMonteCarloSearch(
   particles.forEach((particle, particleIndex) => {
     for (let offset = 0; offset < orderedMoves.length; offset += 1) {
       const move = orderedMoves[(particleIndex + offset) % orderedMoves.length];
-      const outcome = evaluateRootMove(game, perspective, particle, move, rolloutCache, styles);
+      const outcome = evaluateRootMove(
+        game,
+        perspective,
+        particle,
+        move,
+        rolloutCache,
+        styles,
+        rolloutPolicy,
+      );
       recordBaselineOutcome(
         baselineOutcomes.get(moveKey(move))!,
         outcome,
@@ -2460,7 +2503,14 @@ function analyzeMovesForPlayer(
       playedTiles: game.chain,
     }),
   ]));
-  const search = informationSetMonteCarloSearch(game, perspective, moves, samples, styles);
+  const search = informationSetMonteCarloSearch(
+    game,
+    perspective,
+    moves,
+    samples,
+    styles,
+    options?.rolloutPolicy ?? 'current',
+  );
 
   return moves.map((move) => {
     const treeOutcome = search.outcomes.get(moveKey(move))!;

@@ -146,13 +146,14 @@ function exactOracleKeys(game, maximumTiles = 15) {
   return outcomes.filter(({ utility }) => utility === best).map(({ key }) => key);
 }
 
-function runAnalysis(safeGame, budget, seedSalt, rootCandidateKeys) {
+function runAnalysis(safeGame, budget, seedSalt, rootCandidateKeys, rolloutPolicy = 'current') {
   const particleCount = particleCountForBudget(budget);
   const beliefState = createBeliefState(safeGame, 0, particleCount, undefined, seedSalt);
   const started = performance.now();
   const ranked = analyzeMoves(safeGame, particleCount, beliefState, undefined, {
     representativeLimit: budget,
     rootCandidateKeys,
+    rolloutPolicy,
   });
   return { ranked, elapsedMs: performance.now() - started };
 }
@@ -169,6 +170,7 @@ async function runAdaptiveBenchmarkAnalysis(
   refinementSamples,
   refinementMaximumGap,
   samplingMode = 'independent',
+  rolloutPolicy = 'current',
 ) {
   const started = performance.now();
   let preRefinementElapsedMs = 0;
@@ -204,6 +206,7 @@ async function runAdaptiveBenchmarkAnalysis(
             representativeLimit: batchSamples,
             representativePoolSize: finalBudget,
             representativeOffset: sharedOffset,
+            rolloutPolicy,
           });
           sharedOffset += batchSamples;
           return { ranked, elapsedMs: performance.now() - batchStarted };
@@ -213,6 +216,7 @@ async function runAdaptiveBenchmarkAnalysis(
           batchSamples,
           `${seedSalt}|stage-${stageIndex}|batch-${batchSamples}`,
           candidateKeys,
+          rolloutPolicy,
         );
       batches.push(batch.ranked);
       if (!candidateKeys) preRefinementElapsedMs += batch.elapsedMs;
@@ -302,13 +306,20 @@ export async function evaluateReliabilityPosition(position, {
   adaptiveRefinementMaximumGap = 3,
   adaptiveSelectionPolicies = [],
   adaptiveSamplingPolicies = [],
+  rolloutPolicy = 'current',
   seed = 'mesa-quince-reliability-v1',
 } = {}) {
   if (adaptiveSamplingPolicies.length && adaptiveRefinementSamples > 0) {
     throw new Error('Adaptive sampling experiments require candidate-only refinement to be disabled.');
   }
   const safeGame = informationSafeBenchmarkGame(position.game);
-  const reference = runAnalysis(safeGame, referenceBudget, `${seed}|${position.id}|reference`);
+  const reference = runAnalysis(
+    safeGame,
+    referenceBudget,
+    `${seed}|${position.id}|reference`,
+    undefined,
+    rolloutPolicy,
+  );
   const referenceTopKey = moveKey(reference.ranked[0]);
   const referenceBestKeys = plausibleBestMoveKeys(reference.ranked, [reference.ranked], adaptiveRecommendationGap);
   const referenceChoice = classifyAnalyzedChoice(reference.ranked, position.playedKey);
@@ -320,7 +331,13 @@ export async function evaluateReliabilityPosition(position, {
   for (const budget of budgets) {
     const trials = [];
     for (let repetition = 0; repetition < repetitions; repetition += 1) {
-      const analysis = runAnalysis(safeGame, budget, `${seed}|${position.id}|budget-${budget}|repeat-${repetition}`);
+      const analysis = runAnalysis(
+        safeGame,
+        budget,
+        `${seed}|${position.id}|budget-${budget}|repeat-${repetition}`,
+        undefined,
+        rolloutPolicy,
+      );
       const choice = classifyAnalyzedChoice(analysis.ranked, position.playedKey);
       trials.push(evaluatedTrial({
         repetition,
@@ -356,6 +373,8 @@ export async function evaluateReliabilityPosition(position, {
         adaptiveMistakePolicy,
         adaptiveRefinementSamples,
         adaptiveRefinementMaximumGap,
+        'independent',
+        rolloutPolicy,
       );
       if (adaptiveRefinementSamples > 0) {
         const control = analysis.adaptive.preRefinement ?? analysis.adaptive;
@@ -414,6 +433,7 @@ export async function evaluateReliabilityPosition(position, {
           0,
           adaptiveRefinementMaximumGap,
           'shared-pool',
+          rolloutPolicy,
         );
         adaptiveSamplingVariantTrials[policy].push(evaluatedTrial({
           repetition,
@@ -472,6 +492,7 @@ export async function evaluateReliabilityPosition(position, {
 
   return {
     id: position.id,
+    rolloutPolicy,
     phase: position.phase,
     branching: legalMovesFor(position.game.hands[0], position.game.chain).length,
     handSizes: position.game.hands.map((hand) => hand.length),
@@ -485,6 +506,7 @@ export async function evaluateReliabilityPosition(position, {
       confidentMistake: referenceChoice.confidentMistake,
       gap: referenceChoice.gap,
       interval: referenceChoice.interval,
+      rates: Object.fromEntries(reference.ranked.map((move) => [moveKey(move), move.winRate])),
       clearRecommendation: reference.ranked.length < 2
         || pairedRatedMoveDifference(reference.ranked[0], reference.ranked[1]).interval[0] > 0,
       exactOracleAgreement: exactKeys ? exactKeys.includes(referenceTopKey) : null,
@@ -518,6 +540,149 @@ export async function evaluateReliabilityPosition(position, {
       stages: [...adaptiveStages],
       trials: adaptiveSamplingVariantTrials[policy],
     }])) : {},
+  };
+}
+
+export async function evaluateAnalyzerRolloutPosition(position, {
+  repetitions = 3,
+  referenceBudget = 5000,
+  adaptiveStages = DEFAULT_ADAPTIVE_STAGES,
+  adaptiveRecommendationGap = 1,
+  adaptiveMistakePolicy,
+  seed = 'mesa-quince-analyzer-rollout-v1',
+} = {}) {
+  const safeGame = informationSafeBenchmarkGame(position.game);
+  const exactKeys = exactOracleKeys(position.game);
+  const policies = ['current', 'exhaustive-forecast'];
+  const positionNumber = Number(position.id.split('-').at(-1)) || 0;
+  const policyOrder = (offset = 0) => (
+    (positionNumber + offset) % 2 ? policies : [...policies].reverse()
+  );
+  const references = {};
+  const referenceInternals = {};
+
+  for (const policy of policyOrder()) {
+    const analysis = runAnalysis(
+      safeGame,
+      referenceBudget,
+      `${seed}|${position.id}|reference`,
+      undefined,
+      policy,
+    );
+    const topKey = moveKey(analysis.ranked[0]);
+    const bestKeys = plausibleBestMoveKeys(
+      analysis.ranked,
+      [analysis.ranked],
+      adaptiveRecommendationGap,
+    );
+    const choice = classifyAnalyzedChoice(analysis.ranked, position.playedKey);
+    const rates = new Map(analysis.ranked.map((move) => [moveKey(move), move.winRate]));
+    referenceInternals[policy] = {
+      topKey,
+      bestKeys,
+      choice,
+      rates,
+      bestRate: analysis.ranked[0].winRate,
+    };
+    references[policy] = {
+      budget: referenceBudget,
+      topKey,
+      acceptableTopKeys: bestKeys,
+      verdict: choice.verdict,
+      confidentMistake: choice.confidentMistake,
+      gap: choice.gap,
+      interval: choice.interval,
+      clearRecommendation: analysis.ranked.length < 2
+        || pairedRatedMoveDifference(analysis.ranked[0], analysis.ranked[1]).interval[0] > 0,
+      exactOracleAgreement: exactKeys ? exactKeys.includes(topKey) : null,
+      elapsedMs: analysis.elapsedMs,
+      rates: Object.fromEntries(rates),
+    };
+  }
+
+  const trials = Object.fromEntries(policies.map((policy) => [policy, []]));
+  const paired = [];
+  for (let repetition = 0; repetition < repetitions; repetition += 1) {
+    const analyses = {};
+    for (const policy of policyOrder(repetition)) {
+      analyses[policy] = await runAdaptiveBenchmarkAnalysis(
+        safeGame,
+        position.playedKey,
+        position.phase,
+        legalMovesFor(position.game.hands[0], position.game.chain).length,
+        adaptiveStages,
+        `${seed}|${position.id}|adaptive|repeat-${repetition}`,
+        adaptiveRecommendationGap,
+        adaptiveMistakePolicy,
+        0,
+        3,
+        'independent',
+        policy,
+      );
+      const reference = referenceInternals[policy];
+      trials[policy].push(evaluatedTrial({
+        repetition,
+        ranked: analyses[policy].ranked,
+        elapsedMs: analyses[policy].elapsedMs,
+        choice: analyses[policy].adaptive.choice,
+        referenceTopKey: reference.topKey,
+        referenceBestKeys: reference.bestKeys,
+        referenceChoice: reference.choice,
+        referenceRates: reference.rates,
+        referenceBestRate: reference.bestRate,
+        exactKeys,
+        metadata: {
+          ...adaptiveTrialMetadata(analyses[policy].adaptive, position.playedKey),
+          rolloutPolicy: policy,
+        },
+      }));
+    }
+
+    const control = trials.current.at(-1);
+    const candidate = trials['exhaustive-forecast'].at(-1);
+    const regretUnder = (policy, key) => {
+      const reference = referenceInternals[policy];
+      const rate = reference.rates.get(key);
+      if (rate === undefined) throw new Error(`Reference ${policy} is missing ${key}.`);
+      return Math.max(0, reference.bestRate - rate);
+    };
+    const controlCurrentRegret = regretUnder('current', control.topKey);
+    const controlExhaustiveRegret = regretUnder('exhaustive-forecast', control.topKey);
+    const candidateCurrentRegret = regretUnder('current', candidate.topKey);
+    const candidateExhaustiveRegret = regretUnder('exhaustive-forecast', candidate.topKey);
+    paired.push({
+      repetition,
+      controlTopKey: control.topKey,
+      candidateTopKey: candidate.topKey,
+      selectionChanged: control.topKey !== candidate.topKey,
+      controlCurrentRegret,
+      controlExhaustiveRegret,
+      candidateCurrentRegret,
+      candidateExhaustiveRegret,
+      controlRobustRegret: (controlCurrentRegret + controlExhaustiveRegret) / 2,
+      candidateRobustRegret: (candidateCurrentRegret + candidateExhaustiveRegret) / 2,
+      controlWorstRegret: Math.max(controlCurrentRegret, controlExhaustiveRegret),
+      candidateWorstRegret: Math.max(candidateCurrentRegret, candidateExhaustiveRegret),
+      controlWithinOneOnBoth: controlCurrentRegret <= 1 && controlExhaustiveRegret <= 1,
+      candidateWithinOneOnBoth: candidateCurrentRegret <= 1 && candidateExhaustiveRegret <= 1,
+    });
+  }
+
+  return {
+    id: position.id,
+    phase: position.phase,
+    branching: legalMovesFor(position.game.hands[0], position.game.chain).length,
+    handSizes: position.game.hands.map((hand) => hand.length),
+    eventCount: position.game.events.length,
+    playedKey: position.playedKey,
+    exactOracleKeys: exactKeys,
+    references,
+    policies: Object.fromEntries(policies.map((policy) => [policy, {
+      rolloutPolicy: policy,
+      stages: [...adaptiveStages],
+      trials: trials[policy],
+    }])),
+    paired,
   };
 }
 

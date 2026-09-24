@@ -132,7 +132,13 @@ test('the analyzer does not change when the real hidden tile identities change',
   const deck = fullSet().filter(({ id }) => !['1-5', '8-9', '2-2', 'board'].includes(id));
   const base = playingGame({ hands: [[tile(1, 5), tile(8, 9), tile(2, 2)], deck.slice(0, 4), deck.slice(4, 8)] });
   const alternate = { ...base, hands: [base.hands[0], deck.slice(12, 16), deck.slice(20, 24)] };
-  const summarize = (game) => analyzeMoves(game, 70).map((move) => [
+  const summarize = (game, rolloutPolicy) => analyzeMoves(
+    game,
+    70,
+    undefined,
+    undefined,
+    { rolloutPolicy },
+  ).map((move) => [
     move.tile.id,
     move.side,
     move.winRate,
@@ -141,7 +147,16 @@ test('the analyzer does not change when the real hidden tile identities change',
     move.treeSearch.informationSets,
     move.treeSearch.deepestPly,
   ]);
-  assert.deepEqual(summarize(base), summarize(alternate));
+  for (const policy of ['current', 'exhaustive-forecast']) {
+    assert.deepEqual(summarize(base, policy), summarize(alternate, policy), policy);
+  }
+});
+
+test('the explicit current rollout preserves the default analyzer exactly', () => {
+  const game = playingGame();
+  const implicit = analyzeMoves(game, 40);
+  const explicit = analyzeMoves(game, 40, undefined, undefined, { rolloutPolicy: 'current' });
+  assert.deepEqual(explicit, implicit);
 });
 
 test('persistent beliefs ignore the real hidden tile identities and survive unchanged state', () => {

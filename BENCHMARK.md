@@ -429,3 +429,30 @@ The complete 120-deal run evaluated 8,640 rounds and 25,920 policy appearances. 
 The candidate's average losing-hand total was 0.26 pips higher, but the interval included zero and the estimate remained comfortably inside the preregistered one-pip noninferiority limit. Its average end total across all outcomes was slightly lower, 16.89 versus 17.03. The controlled mixture was effectively neutral and failed the strategic-signal check. `stochastic-top-two` was rejected after losing 3.49 percentage points overall and failing every gate.
 
 This result selects exhaustive public forecasting as the next analyzer candidate. It does not change the live coach. Promotion still requires a separately seeded, paired analyzer-quality experiment against the current rollout. The complete evidence is stored in `benchmarks/rollout-policy-v1-120.json` and `benchmarks/rollout-policy-v1-120.md`.
+
+### Exhaustive-rollout analyzer promotion protocol
+
+The promotion study uses the fresh seed `mesa-quince-analyzer-rollout-v1` to collect 200 unseen positions, balanced across opening, middle, late, and likely-block play. Each analyzer receives three adaptive repetitions at 120, 250, 500, 1,000, and 2,000 samples. Current and exhaustive rollouts see the same plausible hidden deals at every paired stage. Neither analyzer can inspect realized opponent hands or sleeping tiles.
+
+Each rollout is scored against its own independent 5,000-sample reference. That measures whether the adaptive analyzer reliably converges under the model it uses, but it could favor each model's own choices. The study therefore adds a neutral cross-reference check: every selected move is scored under both high-budget references, and the average and worst regret are compared. The earlier matched self-play diagnostic supplies the independent evidence that the exhaustive rollout plays stronger dominoes.
+
+Every promotion check below is locked before opening the full corpus. Exhaustive forecasting passes only if all checks succeed:
+
+- At least 5% of recommendations change, proving the candidate was exercised.
+- At least 90% of trials finish within one point of their policy-specific reference, mean regret is at most one point, and at least 90% of positions are acceptable on every repeat.
+- Mistake-label agreement is at least 95% and false-positive mistake calls are at most 2%.
+- Within-one-point quality is no more than one percentage point below control, own-reference mean regret is no more than 0.02 point worse, and repeat acceptability does not decline.
+- Mistake-label agreement does not decline and false-positive mistake calls do not increase.
+- Average regret across both references improves or ties control, with the upper 95% bound no worse than 0.10 point.
+- The share of choices within one point under both references is no more than one percentage point lower.
+- No phase has more than 0.10 point worse cross-reference mean regret.
+- Deal-specific exact-endgame agreement declines by no more than two percentage points.
+- Mean sample use rises by no more than 5%, and mean wall time rises by no more than 75%.
+
+Passing authorizes changing the analyzer rollout to exhaustive public forecasting, followed by the full product test suite and build before the change is pushed. Failing any check keeps the current rollout.
+
+```sh
+caffeinate -i npm run benchmark:analyzer-rollout
+```
+
+The study uses nine workers and atomic per-position checkpoints at `outputs/analyzer-rollout-v1-200.checkpoint`. Add `-- --resume` after an interruption.

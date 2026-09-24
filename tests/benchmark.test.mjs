@@ -16,6 +16,7 @@ import {
   adaptiveSamplingDevelopmentGate,
   adaptiveSelectionDevelopmentGate,
   collectDecisionCorpus,
+  evaluateAnalyzerRolloutPosition,
   evaluateReliabilityPosition,
   informationSafeBenchmarkGame,
   summarizeReliability,
@@ -31,6 +32,10 @@ import {
   runRolloutPolicyDeal,
   summarizeRolloutPolicyBenchmark,
 } from '../scripts/rollout-policy-core.mjs';
+import {
+  analyzerRolloutPromotionGate,
+  summarizeAnalyzerRollout,
+} from '../scripts/analyzer-rollout-core.mjs';
 
 test('matched schedule puts every strategy in every seat equally', () => {
   for (const strategy of STRATEGIES) {
@@ -108,6 +113,96 @@ test('parallel rollout-policy workers preserve deterministic deal results', asyn
     workerUrl: new URL('../scripts/rollout-policy-worker.mjs', import.meta.url),
   });
   assert.deepEqual(parallel, sequential);
+});
+
+test('paired analyzer rollout evaluation is information-safe and summarizes both references', async () => {
+  const position = collectDecisionCorpus({
+    positionsPerPhase: 1,
+    seed: 'analyzer-rollout-safety-test',
+  }).find(({ phase }) => phase === 'middle');
+  const hidden = [...position.game.hands[1], ...position.game.hands[2]].reverse();
+  const firstHiddenSize = position.game.hands[1].length;
+  const alternate = {
+    ...position,
+    game: {
+      ...position.game,
+      hands: [
+        position.game.hands[0],
+        hidden.slice(0, firstHiddenSize),
+        hidden.slice(firstHiddenSize),
+      ],
+    },
+  };
+  const options = {
+    repetitions: 1,
+    referenceBudget: 12,
+    adaptiveStages: [4, 8],
+    seed: 'analyzer-rollout-safety-test',
+  };
+  const [first, second] = await Promise.all([
+    evaluateAnalyzerRolloutPosition(position, options),
+    evaluateAnalyzerRolloutPosition(alternate, options),
+  ]);
+  const signature = (result) => ({
+    references: Object.fromEntries(Object.entries(result.references).map(([policy, reference]) => [
+      policy,
+      [reference.topKey, reference.acceptableTopKeys, reference.verdict, reference.rates],
+    ])),
+    policies: Object.fromEntries(Object.entries(result.policies).map(([policy, value]) => [
+      policy,
+      value.trials.map(({ topKey, regret, withinOnePoint, verdict, samplesUsed }) => (
+        [topKey, regret, withinOnePoint, verdict, samplesUsed]
+      )),
+    ])),
+    paired: result.paired,
+  });
+  assert.deepEqual(signature(first), signature(second));
+  const summary = summarizeAnalyzerRollout([first], {
+    seed: options.seed,
+    confidenceResamples: 10,
+  });
+  assert.equal(summary.positions, 1);
+  assert.equal(summary.policies.current.trials, 1);
+  assert.equal(summary.policies['exhaustive-forecast'].trials, 1);
+  assert.equal(typeof summary.gate.passed, 'boolean');
+});
+
+test('analyzer rollout promotion gate requires robust quality and controlled cost', () => {
+  const metric = (mean, low = mean, high = mean) => ({ mean, low, high });
+  const policy = {
+    withinOnePoint: metric(0.95),
+    meanRegret: metric(0.1),
+    mistakeLabelAgreement: metric(0.98),
+    falsePositiveMistakes: metric(0.01),
+    repeatAcceptability: metric(0.92),
+    samplesUsed: metric(1000),
+    runtimeMs: metric(1000),
+    exactOracleAgreement: metric(0.8),
+  };
+  const comparison = {
+    selectionChangeRate: metric(0.1),
+    ownWithinOneDifference: metric(0),
+    ownRegretDifference: metric(0),
+    repeatAcceptabilityDifference: metric(0),
+    mistakeLabelAgreementDifference: metric(0),
+    falsePositiveDifference: metric(0),
+    robustRegretDifference: metric(-0.02, -0.05, 0.05),
+    bothReferencesWithinOneDifference: metric(0),
+    exactOracleAgreementDifference: metric(0),
+  };
+  const summary = {
+    policies: { current: policy, 'exhaustive-forecast': policy },
+    comparison,
+    byPhase: Object.fromEntries(['opening', 'middle', 'late', 'block'].map((phase) => [
+      phase,
+      { comparison: { robustRegretDifference: metric(0) } },
+    ])),
+  };
+  assert.equal(analyzerRolloutPromotionGate(summary).passed, true);
+  assert.equal(analyzerRolloutPromotionGate({
+    ...summary,
+    comparison: { ...comparison, robustRegretDifference: metric(0.01, -0.01, 0.05) },
+  }).passed, false);
 });
 
 test('matched deals are deterministic and contain 30 dealt plus 25 sleeping tiles', () => {
