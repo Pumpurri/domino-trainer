@@ -42,6 +42,7 @@ export type StrategicPhase = 'opening' | 'middle' | 'late' | 'block';
 export type RolloutPolicy = 'current' | 'exhaustive-forecast' | 'mixed' | 'stochastic-top-two';
 export type AnalyzerRolloutPolicy = Extract<RolloutPolicy, 'current' | 'exhaustive-forecast'>;
 export type RepresentativePolicy = 'systematic' | 'public-stratified';
+export type ExtraTreeSearchPolicy = 'current' | 'disabled';
 export type StrategyContext = {
   phase: StrategicPhase;
   chainLength: number;
@@ -300,6 +301,7 @@ export type AnalysisOptions = {
   rootCandidateKeys?: readonly string[];
   rolloutPolicy?: AnalyzerRolloutPolicy;
   representativePolicy?: RepresentativePolicy;
+  extraTreeSearch?: ExtraTreeSearchPolicy;
 };
 
 type WeightedSample = BeliefParticle;
@@ -2482,6 +2484,7 @@ function informationSetMonteCarloSearch(
   particles: BeliefParticle[],
   styles?: OpponentStyleProfile[],
   rolloutPolicy: AnalyzerRolloutPolicy = 'current',
+  extraTreeSearch: ExtraTreeSearchPolicy = 'current',
 ): InformationSetSearchResult {
   const tree = new Map<string, InformationSetNode>();
   const rolloutCache = new Map<string, string>();
@@ -2504,7 +2507,7 @@ function informationSetMonteCarloSearch(
   }
   const orderedMoves = [...moves].sort((left, right) => moveKey(left).localeCompare(moveKey(right)));
   const baseIterations = particles.length * orderedMoves.length;
-  const maximumExtraIterations = Math.ceil(baseIterations * 0.5);
+  const maximumExtraIterations = extraTreeSearch === 'current' ? Math.ceil(baseIterations * 0.5) : 0;
   const maximumExtraPairs = Math.floor(maximumExtraIterations / Math.min(2, orderedMoves.length));
   const extraSequence = systematicParticleSequence(particles, maximumExtraPairs);
   let deepestPly = 0;
@@ -2563,7 +2566,7 @@ function informationSetMonteCarloSearch(
   let extraIterations = 0;
   const batchPairs = Math.max(4, moves.length);
   let extraPairIndex = 0;
-  while (decision.close && extraPairIndex < extraSequence.length) {
+  while (extraTreeSearch === 'current' && decision.close && extraPairIndex < extraSequence.length) {
     const leaders = [...decision.leaders].sort();
     const pairs = Math.min(batchPairs, extraSequence.length - extraPairIndex);
     for (let pairOffset = 0; pairOffset < pairs; pairOffset += 1) {
@@ -2674,6 +2677,7 @@ function analyzeMovesForPlayer(
     samples,
     styles,
     options?.rolloutPolicy ?? 'current',
+    options?.extraTreeSearch ?? 'current',
   );
 
   return moves.map((move) => {
