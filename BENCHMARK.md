@@ -511,3 +511,22 @@ caffeinate -i npm run benchmark:stratified-sampling
 ```
 
 The run uses nine workers and atomic per-position checkpoints at `outputs/stratified-sampling-v1-48.checkpoint`. Add `-- --resume` after an interruption.
+
+### Public-information stratified sampling result
+
+The complete 48-position study evaluated 144 adaptive trials per sampler. The candidate failed one of eight locked checks, so it is not promoted and the live analyzer remains unchanged.
+
+| Measure | Current systematic | Public stratified |
+| --- | ---: | ---: |
+| Within one reference point | 91.0% | 93.1% |
+| Mean reference regret | 0.173 | 0.135 |
+| Repeat acceptability | 83.3% | 87.5% |
+| Mistake-label agreement | 88.9% | 91.0% |
+| False-positive mistakes | 5.6% | 3.5% |
+| Mean samples | 1,972.2 | 1,979.2 |
+
+The candidate changed 5.6% of recommendations, improved repeat acceptability by 4.2 percentage points, and reduced mean regret by 0.039 point. The strongest signal was in wide middle-game decisions: within-one-point quality improved by 4.2 points, repeat acceptability improved by 8.3 points, and mean regret declined by 0.089 point. Opening quality was effectively unchanged, with equal within-one-point and repeat rates and a 0.012-point increase in regret. All quality, label, safety, exercise, and phase-preservation checks passed.
+
+The sole failure was the locked requirement that mean sample use not increase. Current sampling stopped at 1,000 samples in four of 144 trials; stratified sampling stopped there in three. That one net extra 1,000-sample continuation increased the mean by 6.94 samples, or 0.35%. The paired interval was [-13.89, 27.78], so the result does not establish a systematic computation increase, but the preregistered zero-tolerance check still fails and cannot be relaxed after seeing the result.
+
+The forensic audit found an average of 23.4 plausible public-information strata per belief pool. Current representatives covered 99.8% of posterior mass and stratified representatives covered 100.0%, while the weighted 500-sample candidate retained 497.4 effective samples. The evidence supports a separately preregistered fixed-budget middle-game experiment, where both policies are forced to use identical 120- and 500-sample budgets and sample-use differences cannot be created by adaptive stopping. It does not authorize a 200-position promotion study yet. Complete evidence is stored in `benchmarks/stratified-sampling-v1-48.json` and `benchmarks/stratified-sampling-v1-48.md`.

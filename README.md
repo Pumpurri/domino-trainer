@@ -34,6 +34,8 @@ The completed paired sampler-ablation found no aggregation defect and no early-s
 
 The completed 8,640-round rollout diagnostic found that exhaustive public forecasting was a stronger standalone policy, improving round win rate from 32.73% to 34.40%. Its separately seeded 200-position analyzer promotion study then failed six locked checks. It changed only 3.8% of recommendations, moved cross-reference regret by +0.004 point, reduced repeat acceptability from 86% to 85%, and increased mean runtime by 12.4%. The live analyzer therefore remains on the current shortlist-plus-forecast rollout.
 
+The 48-position public-information stratification study produced a promising middle-game signal but failed its locked sample-use check. It improved repeat acceptability from 83.3% to 87.5% and reduced mean regret from 0.173 to 0.135, while one additional trial continued from 1,000 to 2,000 samples. That raised mean use by 6.94 samples, so the candidate remains outside the live coach. The next experiment should compare it at identical fixed 120- and 500-sample budgets in difficult middle-game decisions.
+
 ## Run locally
 
 ```sh
