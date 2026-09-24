@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   collectFixedStratifiedCorpus,
   evaluateFixedStratifiedPosition,
+  fixedStratifiedBudgetGate,
   summarizeFixedStratified,
 } from '../scripts/fixed-stratified-core.mjs';
 
@@ -94,4 +95,33 @@ test('fixed stratified benchmark cannot inspect real hidden hands', async () => 
     evaluateFixedStratifiedPosition(alternate, options),
   ]);
   assert.deepEqual(withoutTiming(first), withoutTiming(second));
+});
+
+test('fixed stratified gate treats exact inclusive boundaries as passing', () => {
+  const positions = [{
+    budgets: {
+      500: {
+        trials: [{
+          variants: {
+            systematic: { samplesUsed: 500 },
+            'public-stratified': { samplesUsed: 500 },
+          },
+        }],
+      },
+    },
+  }];
+  const metric = (mean) => ({ mean, low: mean, high: mean });
+  const summary = {
+    selectionChangeRate: metric(0.05),
+    variants: { 'public-stratified': { effectiveSamples: metric(475) } },
+    effect: {
+      repeatAcceptability: metric(0.01),
+      meanRegret: metric(-0.01),
+      withinOnePoint: metric(-0.01 - Number.EPSILON),
+      falsePositiveMistake: metric(Number.EPSILON),
+      mistakeLabelAgreement: metric(-0.01 - Number.EPSILON),
+      runtimeRatio: metric(0.20 + Number.EPSILON),
+    },
+  };
+  assert.equal(fixedStratifiedBudgetGate(positions, 500, summary).passed, true);
 });

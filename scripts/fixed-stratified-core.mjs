@@ -256,17 +256,18 @@ function pairedEffect(positions, budget, seed, resamples) {
   };
 }
 
-function budgetGate(positions, budget, summary) {
+export function fixedStratifiedBudgetGate(positions, budget, summary) {
   const trials = positions.flatMap((position) => position.budgets[budget].trials);
+  const tolerance = 1e-12;
   const checks = {
     exercised: summary.selectionChangeRate.mean >= 0.05,
     repeatAcceptabilityImproves: summary.effect.repeatAcceptability.mean > 0,
     regretImproves: summary.effect.meanRegret.mean < 0,
-    withinOnePointNoninferior: summary.effect.withinOnePoint.mean >= -0.01,
-    falsePositivesDoNotIncrease: summary.effect.falsePositiveMistake.mean <= 0,
-    labelAgreementPreserved: summary.effect.mistakeLabelAgreement.mean >= -0.01,
-    effectiveSamplesPreserved: summary.variants['public-stratified'].effectiveSamples.mean >= budget * 0.95,
-    runtimeControlled: summary.effect.runtimeRatio.mean <= 0.20,
+    withinOnePointNoninferior: summary.effect.withinOnePoint.mean >= -0.01 - tolerance,
+    falsePositivesDoNotIncrease: summary.effect.falsePositiveMistake.mean <= tolerance,
+    labelAgreementPreserved: summary.effect.mistakeLabelAgreement.mean >= -0.01 - tolerance,
+    effectiveSamplesPreserved: summary.variants['public-stratified'].effectiveSamples.mean >= budget * 0.95 - tolerance,
+    runtimeControlled: summary.effect.runtimeRatio.mean <= 0.20 + tolerance,
     exactSampleBudget: trials.every((trial) => FIXED_STRATIFIED_VARIANTS.every((variant) => (
       trial.variants[variant].samplesUsed === budget
     ))),
@@ -291,7 +292,7 @@ export function summarizeFixedStratified(positions, {
       return trials.filter((trial) => trial.selectionChanged).length / trials.length;
     }), `${seed}|${budget}|selection-change`, confidenceResamples);
     const summary = { positions: positions.length, variants, effect, selectionChangeRate };
-    summary.gate = budgetGate(positions, budget, summary);
+    summary.gate = fixedStratifiedBudgetGate(positions, budget, summary);
     byBudget[budget] = summary;
   }
   return {
