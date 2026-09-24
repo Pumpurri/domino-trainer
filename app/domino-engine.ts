@@ -198,6 +198,16 @@ export type DecisionOptionAssessment = {
   gap: number;
   interval: [number, number];
 };
+export type DecisionRecommendationEvidence = {
+  primaryKey: string;
+  alternative: {
+    key: string;
+    gap: number;
+    interval: [number, number];
+    batchGaps: number[];
+    topTwoBatchAgreement: number;
+  } | null;
+};
 export type DecisionReview = {
   record: DecisionRecord;
   chosen: DecisionOption;
@@ -3051,6 +3061,63 @@ function pairedBatchGaps(best: DecisionOption, chosen: DecisionOption): number[]
   }
   if (weights.some((weight) => weight <= 0)) return [];
   return weightedTotals.map((total, index) => total / weights[index] * 100);
+}
+
+function optionBatchRates(options: DecisionOption[]): Map<string, number[]> {
+  const count = options.reduce((minimum, option) => Math.min(
+    minimum,
+    option.pairedWins.length,
+    option.pairedWeights.length,
+  ), Number.POSITIVE_INFINITY);
+  if (!Number.isFinite(count) || count < mistakeBatchCount) return new Map();
+  return new Map(options.map((option) => {
+    const weightedTotals = Array(mistakeBatchCount).fill(0);
+    const weights = Array(mistakeBatchCount).fill(0);
+    for (let index = 0; index < count; index += 1) {
+      const batch = index % mistakeBatchCount;
+      weightedTotals[batch] += option.pairedWins[index] * option.pairedWeights[index];
+      weights[batch] += option.pairedWeights[index];
+    }
+    if (weights.some((weight) => weight <= 0)) return [option.key, []];
+    return [option.key, weightedTotals.map((total, index) => total / weights[index] * 100)];
+  }));
+}
+
+export function decisionRecommendationEvidence(
+  options: DecisionOption[],
+  bestKey: string,
+): DecisionRecommendationEvidence {
+  const primary = options.find((option) => option.key === bestKey);
+  if (!primary) throw new Error('Recommendation evidence requires the primary option.');
+  const alternative = options
+    .filter((option) => option.key !== bestKey)
+    .sort((left, right) => right.winRate - left.winRate || left.key.localeCompare(right.key))[0];
+  if (!alternative) return { primaryKey: bestKey, alternative: null };
+
+  const difference = pairedDifference(primary, alternative);
+  const batchGaps = pairedBatchGaps(primary, alternative);
+  const rates = optionBatchRates(options);
+  const alternativeRates = rates.get(alternative.key) ?? [];
+  const topTwoBatchAgreement = alternativeRates.length === mistakeBatchCount
+    ? alternativeRates.filter((_, batch) => {
+      const leaders = options
+        .map((option) => ({ key: option.key, rate: rates.get(option.key)?.[batch] }))
+        .filter((entry): entry is { key: string; rate: number } => entry.rate !== undefined)
+        .sort((left, right) => right.rate - left.rate || left.key.localeCompare(right.key))
+        .slice(0, 2);
+      return leaders.some((entry) => entry.key === alternative.key);
+    }).length / mistakeBatchCount
+    : 0;
+  return {
+    primaryKey: bestKey,
+    alternative: {
+      key: alternative.key,
+      gap: difference.gap,
+      interval: difference.interval,
+      batchGaps,
+      topTwoBatchAgreement,
+    },
+  };
 }
 
 function plausibleOptionKeys(options: DecisionOption[], bestKey: string): string[] {

@@ -5,6 +5,7 @@ import {
   applyPass,
   chooseCasualMove,
   createBeliefState,
+  decisionRecommendationEvidence,
   decisionOptionFromRatedMove,
   detectStrategicPhase,
   endsOf,
@@ -370,6 +371,10 @@ export async function evaluateReliabilityPosition(position, {
       );
       const choice = classifyAnalyzedChoice(analysis.ranked, position.playedKey);
       const uncertaintyChoice = classifyUncertaintyAwareChoice(analysis.ranked, position.playedKey);
+      const coachV2Evidence = decisionRecommendationEvidence(
+        analysis.ranked.map(decisionOptionFromRatedMove),
+        moveKey(analysis.ranked[0]),
+      );
       trials.push(evaluatedTrial({
         repetition,
         ranked: analysis.ranked,
@@ -384,6 +389,7 @@ export async function evaluateReliabilityPosition(position, {
         metadata: {
           recommendationKeys: [moveKey(analysis.ranked[0])],
           uncertaintyCoach: uncertaintyChoice,
+          coachV2Evidence,
         },
       }));
     }
@@ -546,6 +552,10 @@ export async function evaluateReliabilityPosition(position, {
       exactOracleAgreement: exactKeys ? exactKeys.includes(referenceTopKey) : null,
       elapsedMs: reference.elapsedMs,
       uncertaintyCoach: uncertaintyReferenceChoice,
+      coachV2Evidence: decisionRecommendationEvidence(
+        reference.ranked.map(decisionOptionFromRatedMove),
+        referenceTopKey,
+      ),
     },
     exactOracleKeys: exactKeys,
     budgets: byBudget,

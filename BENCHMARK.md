@@ -659,3 +659,30 @@ The full validation completed all 200 positions and 2,000 fixed-budget trials. T
 The candidate nevertheless failed the locked breadth checks. At 120 samples, the mean set-size upper interval was 2.63 rather than at most 2.5, and 62.6% of trials accepted every legal move. At 500 samples, mean set size passed at 2.03, but 45.3% of trials still accepted every legal move. The broad-set rate was not limited to ordinary two-choice positions: among positions with at least three legal moves, it was 48.1% at 120 samples and 29.4% at 500 samples.
 
 Because the breadth gate was locked before opening the corpus, neither budget is promoted. The live report, Deep Review, Mistake Lab, progress labels, and exports retain their existing single-recommendation behavior. The candidate remains available only to the benchmark harness. Any follow-up must define a narrower set rule on a development corpus and pass a separately seeded holdout. Complete evidence is stored in `benchmarks/uncertainty-coach-v1-200.json` and `benchmarks/uncertainty-coach-v1-200.md`.
+
+## Coach V2 development protocol
+
+Coach V2 separates three claims that the first uncertainty-aware candidate mixed together:
+
+- one primary recommendation, which remains the analyzer's existing top-ranked move;
+- at most one optional runner-up, shown only when paired evidence says it is both close and stable;
+- an independent played-move assessment of acceptable, uncertain, or mistake.
+
+The development replay uses the same 200 positions, five repetitions, fixed 120- and 500-sample budgets, independent 5,000-sample references, and seed as the completed uncertainty-aware study. This corpus is development data from this point forward and cannot authorize a product change. The replay records only the evidence required to evaluate a runner-up: its paired estimated gap, paired 95% interval, four interleaved batch gaps, and the share of those batches in which it remains among the two strongest moves. It does not change move simulation, ranking, opponent behavior, or hidden-information access.
+
+The development grid is fixed before collecting the replay. It crosses maximum paired gaps of 0.5, 1, 1.5, 2, and 3 points; maximum paired lower bounds of 0, 0.5, and 1 point; minimum top-two batch agreement of 50%, 75%, and 100%; maximum near-batch gaps of 2, 4, and 6 points; and minimum near-batch agreement of 50%, 75%, and 100%.
+
+A selectable policy must satisfy every condition at both budgets:
+
+- show a runner-up on at least 5% and no more than 35% of trials;
+- place at least 85% of shown runner-ups within one estimated win-rate point of the independent 5,000-sample leader;
+- achieve at least 70% pairwise recommendation-set similarity and at least 70% agreement when two repetitions both show a runner-up;
+- never recommend every legal move when at least three moves are available;
+- never reduce coverage of the independent reference leader relative to the primary recommendation alone.
+
+Eligible policies are ranked by the prespecified utility of correct runner-up rate minus three times incorrect runner-up rate, plus reference-leader coverage gain and a small repeat-agreement term. If no policy is eligible, this Coach V2 design is rejected. If one is selected, its exact thresholds and a separately seeded 200-position holdout protocol must be committed before the holdout begins. Only that fresh holdout can authorize a live coaching change.
+
+```sh
+caffeinate -i npm run benchmark:coach-v2:develop:collect
+npm run benchmark:coach-v2:develop:evaluate
+```

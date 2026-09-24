@@ -15,6 +15,7 @@ import {
   decisionGameFromRecord,
   createOpponentStyles,
   createPracticeGame,
+  decisionRecommendationEvidence,
   detectStrategicPhase,
   estimateBeliefs,
   fullSet,
@@ -580,6 +581,31 @@ test('uncertainty-aware candidate accepts statistically tied moves as strong opt
   assert.equal(decision.assessment, 'acceptable');
   assert.equal(decision.recommendationConfidence, 'uncertain');
   assert.deepEqual(decision.plausibleBestKeys, [top.key, alternative.key]);
+});
+
+test('coach v2 evidence keeps one ranked runner-up and measures independent batch stability', () => {
+  const option = (key, winRate, wins) => {
+    const [tileId, side] = key.split(':');
+    const [a, b] = tileId.split('-').map(Number);
+    return {
+      key, tile: tile(a, b), side, newLeft: b, newRight: 9,
+      winRate, margin: 5, samples: wins.length, nextPassRate: 20,
+      blockedWinRate: 10, emptyWinRate: 30, averagePipsWhenLosing: 12,
+      retainedEndMatches: 1, returnRate: 0.5, pairedWins: wins,
+      pairedWeights: wins.map(() => 1),
+    };
+  };
+  const primary = option('1-5:left', 62.5, [1, 0, 1, 0, 1, 0, 1, 1]);
+  const runnerUp = option('1-2:left', 50, [1, 0, 0, 0, 1, 0, 1, 1]);
+  const third = option('1-8:left', 25, [0, 0, 0, 0, 1, 0, 1, 0]);
+
+  const evidence = decisionRecommendationEvidence([primary, runnerUp, third], primary.key);
+
+  assert.equal(evidence.primaryKey, primary.key);
+  assert.equal(evidence.alternative.key, runnerUp.key);
+  assert.equal(evidence.alternative.batchGaps.length, 4);
+  assert.equal(evidence.alternative.topTwoBatchAgreement, 1);
+  assert.ok(evidence.alternative.gap > 0);
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {
