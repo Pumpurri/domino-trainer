@@ -750,3 +750,37 @@ The candidate reduced the point estimate of false accusations relative to the cu
 The confidence signal is independently promising: clear recommendations were within one reference point on 99.3% and 100% of trials, substantially above the corresponding close-call groups. However, the locked protocol authorized only the combined communication policy and explicitly required every check to pass. Promoting confidence alone after inspecting this holdout would be post hoc. It requires a separately committed confidence-only protocol and another fresh seed.
 
 Complete evidence is stored in `benchmarks/coach-v2-holdout-200.json` and `benchmarks/coach-v2-holdout-200.md`.
+
+## Confidence-only coach development
+
+The confidence-only candidate keeps the existing analyzer ranking, the existing single recommended move, and every current played-move verdict unchanged. It adds only a confidence description for that recommendation. A recommendation is `Clear` when the paired 95% lower advantage over the runner-up exceeds 1.5 percentage points. Every other recommendation is a `Close call`. The threshold was fixed by the earlier Coach V2 work and is not retuned here.
+
+Two previously inspected 200-position corpora are development data for this narrower candidate. Each contains 50 opening, middle, late, and likely-block positions, five repetitions at fixed budgets of 120 and 500, and independent 5,000-sample references. Both development audits passed the proposed aggregate gates at both budgets. Clear recommendations were within one reference point in 98.7% to 100% of trials. Their advantage over close-call recommendations ranged from 11.2 to 20.7 percentage points. Pairwise repeat agreement ranged from 81.9% to 88.5%.
+
+The second corpus exposed the weakest phase result: at 120 samples, eight of nine clear opening recommendations were within one reference point, or 88.9%. The locked holdout therefore includes an explicit phase-level safety check rather than relying only on aggregate quality. Complete development evidence is stored in `benchmarks/confidence-only-development-a-200.json`, `benchmarks/confidence-only-development-a-200.md`, `benchmarks/confidence-only-development-b-200.json`, and `benchmarks/confidence-only-development-b-200.md`.
+
+```sh
+npm run benchmark:confidence:develop:a
+npm run benchmark:confidence:develop:b
+```
+
+### Confidence-only coach holdout protocol
+
+The fresh seed `mesa-quince-confidence-only-holdout-v1` supplies 200 unseen positions, balanced across opening, middle, late, and likely-block play. Each position receives five independent runs at exactly 120 samples and five at exactly 500 samples, plus an independently seeded 5,000-sample reference. Nine workers may evaluate different positions concurrently. Opponent hands and sleeping tiles are replaced before belief generation, so the candidate cannot inspect the realized hidden deal. Confidence intervals use 2,000 position-level bootstrap resamples.
+
+Both budgets must pass every locked check:
+
+- The primary move is unchanged on 100% of trials, and exactly one recommendation is returned on 100% of trials.
+- The lower 95% bound for clear-confidence frequency is at least 10%.
+- The lower 95% bound for clear recommendations within one reference point is at least 90%.
+- Every phase produces at least one clear recommendation, and at least 80% of clear recommendations in each phase are within one reference point by point estimate.
+- The lower 95% bound for the quality advantage of clear recommendations over close calls is at least five percentage points.
+- Confidence agreement with the independent 5,000-sample reference has a lower 95% bound of at least 50%.
+- Pairwise confidence-label agreement across the five independent repetitions has a lower 95% bound of at least 75%.
+
+Passing both budgets authorizes adding only `Clear recommendation` and `Close call` language to live hints, move feedback, the round report, Deep Review, Mistake Lab, progress records, and information-safe exports. It does not authorize changing a recommended move, accepting additional moves, or changing any good, uncertain, or mistake verdict. Failure at either budget keeps the product unchanged.
+
+```sh
+caffeinate -i npm run benchmark:confidence:holdout:collect
+npm run benchmark:confidence:holdout:evaluate
+```

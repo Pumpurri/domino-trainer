@@ -208,6 +208,13 @@ export type DecisionRecommendationEvidence = {
     topTwoBatchAgreement: number;
   } | null;
 };
+export type RecommendationConfidenceAssessment = {
+  primaryKey: string;
+  recommendationKeys: string[];
+  confidence: 'clear' | 'close';
+  gap: number | null;
+  interval: [number, number] | null;
+};
 export type CoachV2Assessment = {
   primaryKey: string;
   recommendationKeys: string[];
@@ -3050,7 +3057,8 @@ const recommendationPracticalGap = 1;
 const mistakeMinimumGap = 4;
 const mistakePracticalGap = 1.5;
 const mistakeBatchCount = 4;
-export const coachV2PracticalGap = 1.5;
+export const recommendationConfidencePracticalGap = 1.5;
+export const coachV2PracticalGap = recommendationConfidencePracticalGap;
 
 function pairedBatchGaps(best: DecisionOption, chosen: DecisionOption): number[] {
   if (best.key === chosen.key) return Array(mistakeBatchCount).fill(0);
@@ -3130,13 +3138,30 @@ export function decisionRecommendationEvidence(
   };
 }
 
+export function assessRecommendationConfidence(
+  options: DecisionOption[],
+  bestKey: string,
+): RecommendationConfidenceAssessment {
+  const evidence = decisionRecommendationEvidence(options, bestKey);
+  const alternative = evidence.alternative;
+  return {
+    primaryKey: bestKey,
+    recommendationKeys: [bestKey],
+    confidence: !alternative || alternative.interval[0] > recommendationConfidencePracticalGap
+      ? 'clear'
+      : 'close',
+    gap: alternative?.gap ?? null,
+    interval: alternative?.interval ?? null,
+  };
+}
+
 export function assessCoachV2Decision(
   options: DecisionOption[],
   bestKey: string,
   chosenKey: string,
 ): CoachV2Assessment {
   const base = assessDecisionOptions(options, bestKey, chosenKey);
-  const recommendation = decisionRecommendationEvidence(options, bestKey);
+  const recommendation = assessRecommendationConfidence(options, bestKey);
   const good = chosenKey === bestKey || base.gap <= coachV2PracticalGap;
   const assessment: DecisionAssessment = good
     ? 'acceptable'
@@ -3151,10 +3176,7 @@ export function assessCoachV2Decision(
   return {
     primaryKey: bestKey,
     recommendationKeys: [bestKey],
-    recommendationConfidence: !recommendation.alternative
-      || recommendation.alternative.interval[0] > coachV2PracticalGap
-      ? 'clear'
-      : 'uncertain',
+    recommendationConfidence: recommendation.confidence === 'clear' ? 'clear' : 'uncertain',
     verdict,
     assessment,
     gap: base.gap,

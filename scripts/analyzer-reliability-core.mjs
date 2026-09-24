@@ -1,6 +1,7 @@
 import {
   assessDecisionOptions,
   assessCoachV2Decision,
+  assessRecommendationConfidence,
   analyzeMoves,
   applyMove,
   applyPass,
@@ -136,6 +137,11 @@ export function classifyUncertaintyAwareChoice(ranked, playedKey) {
 export function classifyCoachV2Choice(ranked, playedKey) {
   const options = ranked.map(decisionOptionFromRatedMove);
   return assessCoachV2Decision(options, moveKey(ranked[0]), playedKey);
+}
+
+export function classifyRecommendationConfidence(ranked) {
+  const options = ranked.map(decisionOptionFromRatedMove);
+  return assessRecommendationConfidence(options, moveKey(ranked[0]));
 }
 
 function exactOracleKeys(game, maximumTiles = 15) {
@@ -361,6 +367,7 @@ export async function evaluateReliabilityPosition(position, {
   const referenceChoice = classifyAnalyzedChoice(reference.ranked, position.playedKey);
   const uncertaintyReferenceChoice = classifyUncertaintyAwareChoice(reference.ranked, position.playedKey);
   const coachV2ReferenceChoice = classifyCoachV2Choice(reference.ranked, position.playedKey);
+  const confidenceReference = classifyRecommendationConfidence(reference.ranked);
   const referenceRates = new Map(reference.ranked.map((move) => [moveKey(move), move.winRate]));
   const referenceBestRate = reference.ranked[0].winRate;
   const exactKeys = exactOracleKeys(position.game);
@@ -379,6 +386,7 @@ export async function evaluateReliabilityPosition(position, {
       const choice = classifyAnalyzedChoice(analysis.ranked, position.playedKey);
       const uncertaintyChoice = classifyUncertaintyAwareChoice(analysis.ranked, position.playedKey);
       const coachV2Choice = classifyCoachV2Choice(analysis.ranked, position.playedKey);
+      const confidenceChoice = classifyRecommendationConfidence(analysis.ranked);
       const coachV2Evidence = decisionRecommendationEvidence(
         analysis.ranked.map(decisionOptionFromRatedMove),
         moveKey(analysis.ranked[0]),
@@ -399,6 +407,7 @@ export async function evaluateReliabilityPosition(position, {
           uncertaintyCoach: uncertaintyChoice,
           coachV2Evidence,
           coachV2: coachV2Choice,
+          coachV3Confidence: confidenceChoice,
         },
       }));
     }
@@ -566,6 +575,7 @@ export async function evaluateReliabilityPosition(position, {
         referenceTopKey,
       ),
       coachV2: coachV2ReferenceChoice,
+      coachV3Confidence: confidenceReference,
     },
     exactOracleKeys: exactKeys,
     budgets: byBudget,

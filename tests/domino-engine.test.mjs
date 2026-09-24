@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   assessDecisionOptions,
   assessCoachV2Decision,
+  assessRecommendationConfidence,
   analyzeMoves,
   applyMove,
   applyPass,
@@ -639,6 +640,32 @@ test('coach v2 separates one recommendation from good, uncertain, and mistake la
   assert.equal(mistake.recommendationConfidence, 'clear');
   assert.equal(mistake.assessment, 'mistake');
   assert.equal(mistake.verdict, 'big-mistake');
+});
+
+test('confidence-only coaching preserves one primary move and separates clear from close', () => {
+  const option = (key, wins) => {
+    const [tileId, side] = key.split(':');
+    const [a, b] = tileId.split('-').map(Number);
+    return {
+      key, tile: tile(a, b), side, newLeft: b, newRight: 9,
+      winRate: wins.reduce((sum, value) => sum + value, 0) / wins.length * 100,
+      margin: 5, samples: wins.length, nextPassRate: 20,
+      blockedWinRate: 10, emptyWinRate: 30, averagePipsWhenLosing: 12,
+      retainedEndMatches: 1, returnRate: 0.5, pairedWins: wins,
+      pairedWeights: wins.map(() => 1),
+    };
+  };
+  const clearTop = option('1-5:left', Array(100).fill(1));
+  const clearSecond = option('1-2:left', Array(100).fill(0));
+  const clear = assessRecommendationConfidence([clearTop, clearSecond], clearTop.key);
+  assert.deepEqual(clear.recommendationKeys, [clearTop.key]);
+  assert.equal(clear.confidence, 'clear');
+
+  const closeTop = option('1-5:left', Array.from({ length: 100 }, (_, index) => index < 51 ? 1 : 0));
+  const closeSecond = option('1-2:left', Array.from({ length: 100 }, (_, index) => index < 50 ? 1 : 0));
+  const close = assessRecommendationConfidence([closeTop, closeSecond], closeTop.key);
+  assert.deepEqual(close.recommendationKeys, [closeTop.key]);
+  assert.equal(close.confidence, 'close');
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {
