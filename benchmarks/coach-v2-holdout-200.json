@@ -1,0 +1,208 @@
+{
+  "generatedAt": "2026-09-24T18:51:38.667Z",
+  "source": "outputs/coach-v2-holdout-200.raw.json",
+  "study": "holdout",
+  "config": {
+    "seed": "mesa-quince-coach-v2-holdout-v1",
+    "positions": 200,
+    "repetitions": 5,
+    "budgets": [
+      120,
+      500
+    ],
+    "referenceBudget": 5000,
+    "confidenceResamples": 2000,
+    "practicalGap": 1.5
+  },
+  "passed": false,
+  "budgets": [
+    {
+      "budget": 120,
+      "summary": {
+        "primaryUnchanged": {
+          "mean": 1,
+          "low": 1,
+          "high": 1
+        },
+        "exactlyOneRecommendation": {
+          "mean": 1,
+          "low": 1,
+          "high": 1
+        },
+        "falseAccusations": {
+          "mean": 0.014,
+          "low": 0.006,
+          "high": 0.022
+        },
+        "currentFalseAccusations": {
+          "mean": 0.022,
+          "low": 0.011,
+          "high": 0.034
+        },
+        "falseReassurance": {
+          "mean": 0.01,
+          "low": 0.003,
+          "high": 0.018
+        },
+        "labelAgreement": {
+          "mean": 0.709,
+          "low": 0.665,
+          "high": 0.75
+        },
+        "decidedCoverage": {
+          "mean": 0.692,
+          "low": 0.647,
+          "high": 0.734
+        },
+        "goodPrecision": {
+          "mean": 0.9361370716510904,
+          "low": 0.9045307443365695,
+          "high": 0.9633967789165446
+        },
+        "mistakePrecision": {
+          "mean": 0.72,
+          "low": 0.5121951219512195,
+          "high": 0.8604651162790697
+        },
+        "uncertainRate": {
+          "mean": 0.308,
+          "low": 0.267,
+          "high": 0.353
+        },
+        "clearRate": {
+          "mean": 0.145,
+          "low": 0.112,
+          "high": 0.182
+        },
+        "clearWithinOnePoint": {
+          "mean": 0.993103448275862,
+          "low": 0.9770992366412213,
+          "high": 1
+        },
+        "unclearWithinOnePoint": {
+          "mean": 0.8093567251461988,
+          "low": 0.7758620689655172,
+          "high": 0.8433179723502304
+        },
+        "confidenceAgreement": {
+          "mean": 0.593,
+          "low": 0.533,
+          "high": 0.652
+        }
+      },
+      "gate": {
+        "passed": false,
+        "checks": {
+          "primaryUnchanged": true,
+          "exactlyOneRecommendation": true,
+          "falseAccusations": false,
+          "noFalseAccusationIncrease": true,
+          "falseReassurance": true,
+          "goodPrecision": true,
+          "mistakePrecision": false,
+          "labelAgreement": true,
+          "decidedCoverage": true,
+          "uncertaintyExercised": true,
+          "clearConfidenceExercised": true,
+          "clearRecommendationQuality": true,
+          "confidenceDiscriminates": true,
+          "confidenceAgreement": true
+        }
+      }
+    },
+    {
+      "budget": 500,
+      "summary": {
+        "primaryUnchanged": {
+          "mean": 1,
+          "low": 1,
+          "high": 1
+        },
+        "exactlyOneRecommendation": {
+          "mean": 1,
+          "low": 1,
+          "high": 1
+        },
+        "falseAccusations": {
+          "mean": 0.02,
+          "low": 0.009,
+          "high": 0.033
+        },
+        "currentFalseAccusations": {
+          "mean": 0.025,
+          "low": 0.013,
+          "high": 0.039
+        },
+        "falseReassurance": {
+          "mean": 0.005,
+          "low": 0.001,
+          "high": 0.01
+        },
+        "labelAgreement": {
+          "mean": 0.844,
+          "low": 0.809,
+          "high": 0.876
+        },
+        "decidedCoverage": {
+          "mean": 0.839,
+          "low": 0.804,
+          "high": 0.873
+        },
+        "goodPrecision": {
+          "mean": 0.9501347708894878,
+          "low": 0.9220055710306406,
+          "high": 0.973404255319149
+        },
+        "mistakePrecision": {
+          "mean": 0.7938144329896907,
+          "low": 0.6511627906976745,
+          "high": 0.9010989010989011
+        },
+        "uncertainRate": {
+          "mean": 0.161,
+          "low": 0.127,
+          "high": 0.196
+        },
+        "clearRate": {
+          "mean": 0.308,
+          "low": 0.257,
+          "high": 0.361
+        },
+        "clearWithinOnePoint": {
+          "mean": 1,
+          "low": 1,
+          "high": 1
+        },
+        "unclearWithinOnePoint": {
+          "mean": 0.8786127167630058,
+          "low": 0.8441358024691358,
+          "high": 0.9108910891089109
+        },
+        "confidenceAgreement": {
+          "mean": 0.736,
+          "low": 0.69,
+          "high": 0.784
+        }
+      },
+      "gate": {
+        "passed": false,
+        "checks": {
+          "primaryUnchanged": true,
+          "exactlyOneRecommendation": true,
+          "falseAccusations": false,
+          "noFalseAccusationIncrease": true,
+          "falseReassurance": true,
+          "goodPrecision": true,
+          "mistakePrecision": false,
+          "labelAgreement": true,
+          "decidedCoverage": true,
+          "uncertaintyExercised": true,
+          "clearConfidenceExercised": true,
+          "clearRecommendationQuality": true,
+          "confidenceDiscriminates": true,
+          "confidenceAgreement": true
+        }
+      }
+    }
+  ]
+}

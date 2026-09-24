@@ -724,3 +724,29 @@ Passing both budgets authorizes integrating only these Coach V2 communication se
 caffeinate -i npm run benchmark:coach-v2:holdout:collect
 npm run benchmark:coach-v2:holdout:evaluate
 ```
+
+### Coach V2 single-recommendation holdout result
+
+The complete fresh holdout evaluated 200 positions and 2,000 fixed-budget trials. Coach V2 failed two locked safety checks at both budgets and is not promoted. The live coach, round report, Deep Review, Mistake Lab, progress labels, and exports remain unchanged.
+
+| Measure | 120 samples | 500 samples |
+| --- | ---: | ---: |
+| Primary recommendation unchanged | 100.0% | 100.0% |
+| Exactly one recommendation | 100.0% | 100.0% |
+| Three-way label agreement | 70.9% | 84.4% |
+| Decided-label coverage | 69.2% | 83.9% |
+| Good-label precision | 93.6% | 95.0% |
+| False reassurance | 1.0% | 0.5% |
+| False accusations | 1.4% | 2.0% |
+| Current-coach false accusations | 2.2% | 2.5% |
+| Mistake-label precision | 72.0% | 79.4% |
+| Clear-confidence rate | 14.5% | 30.8% |
+| Clear recommendations within one reference point | 99.3% | 100.0% |
+| Close-call recommendations within one reference point | 80.9% | 87.9% |
+| Confidence agreement | 59.3% | 73.6% |
+
+The candidate reduced the point estimate of false accusations relative to the current coach at both budgets, but the upper 95% bounds were 2.2% at 120 samples and 3.3% at 500, above the locked 2% ceiling. Mistake-label precision was also below the locked 80% minimum at both budgets. Those failures cannot be excused by the otherwise strong replication of good-label precision, false-reassurance safety, decided coverage, and confidence calibration.
+
+The confidence signal is independently promising: clear recommendations were within one reference point on 99.3% and 100% of trials, substantially above the corresponding close-call groups. However, the locked protocol authorized only the combined communication policy and explicitly required every check to pass. Promoting confidence alone after inspecting this holdout would be post hoc. It requires a separately committed confidence-only protocol and another fresh seed.
+
+Complete evidence is stored in `benchmarks/coach-v2-holdout-200.json` and `benchmarks/coach-v2-holdout-200.md`.
