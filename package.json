@@ -54,6 +54,7 @@
     "benchmark:root-racing:quick": "node --experimental-strip-types scripts/benchmark-root-racing.mjs --quick",
     "benchmark:root-racing:confirmed": "node --experimental-strip-types scripts/benchmark-confirmed-root-racing.mjs --positions=24 --minimum-branching=6 --repetitions=5 --reference-samples=5000 --root-budget=120 --ceiling-budget=500 --confidence-resamples=1000 --workers=9 --seed=mesa-quince-confirmed-root-racing-development-v2 --checkpoint=outputs/confirmed-root-racing-development-v2-24.checkpoint --json=outputs/confirmed-root-racing-development-v2-24.json --report=outputs/confirmed-root-racing-development-v2-24.md",
     "benchmark:root-racing:confirmed:quick": "node --experimental-strip-types scripts/benchmark-confirmed-root-racing.mjs --quick",
+    "benchmark:root-racing:calibrate": "node --experimental-strip-types scripts/calibrate-confirmed-root-racing.mjs --input=benchmarks/confirmed-root-racing-development-v2-24.json --confidence-resamples=2000 --seed=mesa-quince-confirmed-root-racing-calibration-v1 --json=outputs/confirmed-root-racing-calibration-v1.json --report=outputs/confirmed-root-racing-calibration-v1.md",
     "benchmark:v6:forensics": "node scripts/analyze-v6-changes.mjs",
     "benchmark:reliability:audit-labels": "node scripts/audit-coaching-labels.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"

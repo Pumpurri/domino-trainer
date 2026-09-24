@@ -9,6 +9,7 @@ import {
   replayConfirmedRootRace,
   serializeRootRacingTrace,
 } from '../scripts/confirmed-root-racing-core.mjs';
+import { evaluateConfirmedRootRacingGrid } from '../scripts/confirmed-root-racing-calibration-core.mjs';
 
 function fakeMove(index, wins) {
   return {
@@ -129,6 +130,75 @@ test('post-decision confirmation uses equal paired evidence for the recommendati
   const assessment = confirmedChoiceAssessment(fixtureMoves(), '0-0:left', '2-2:left', 10);
   assert.equal(assessment.confidentMistake, true);
   assert.equal(assessment.gap, 100);
+});
+
+test('saved traces support deterministic confirmation-grid replay without simulation', () => {
+  const moves = fixtureMoves();
+  const source = {
+    config: { version: 'test-source', seed: 'test-source-seed' },
+    positions: [{
+      id: 'opening-high-01',
+      branching: moves.length,
+      playedKey: '2-2:left',
+      reference: {
+        topKey: '0-0:left',
+        acceptableTopKeys: ['0-0:left'],
+        rates: Object.fromEntries(moves.map((move) => [`${move.tile.id}:${move.side}`, move.winRate])),
+        confidentMistake: true,
+      },
+      trials: [{
+        repetition: 0,
+        variants: {
+          'control-120': {
+            topKey: '0-0:left',
+            exactTopAgreement: true,
+            acceptableTopAgreement: true,
+            withinOnePoint: true,
+            regret: 0,
+            verdict: 'best',
+            mistakeLabelAgreement: true,
+            falsePositiveMistake: false,
+            selectedSamples: 10,
+            selectedEffectiveSamples: 10,
+            rootEvaluations: 50,
+            postDecisionEvaluations: 0,
+            referenceBestSurvived: true,
+          },
+          'ceiling-500': {
+            topKey: '0-0:left',
+            exactTopAgreement: true,
+            acceptableTopAgreement: true,
+            withinOnePoint: true,
+            regret: 0,
+            verdict: 'best',
+            mistakeLabelAgreement: true,
+            falsePositiveMistake: false,
+            selectedSamples: 30,
+            selectedEffectiveSamples: 30,
+            rootEvaluations: 150,
+            postDecisionEvaluations: 0,
+            referenceBestSurvived: true,
+          },
+        },
+        replay: serializeRootRacingTrace(moves),
+      }],
+    }],
+  };
+  const options = {
+    configs: [{
+      ...config,
+      minimumFreshPositiveBatchAgreement: 1,
+      minimumFreshNonnegativeBatchAgreement: 1,
+    }],
+    rootBudget: 10,
+    confidenceResamples: 10,
+    seed: 'confirmation-grid-test',
+  };
+  const first = evaluateConfirmedRootRacingGrid(source, options);
+  const second = evaluateConfirmedRootRacingGrid(source, options);
+  assert.deepEqual(first, second);
+  assert.equal(first.candidates.length, 1);
+  assert.equal(first.candidates[0].diagnostics.confirmedEliminations, 3);
 });
 
 function withoutTiming(result) {

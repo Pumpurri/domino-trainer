@@ -33,6 +33,8 @@ export const CONFIRMED_ROOT_RACING_CONFIG = {
   minimumPracticalBatchAgreement: 0.5,
   confirmationBatches: 2,
   minimumFreshGap: 1,
+  minimumFreshPositiveBatchAgreement: 1,
+  minimumFreshNonnegativeBatchAgreement: 1,
 };
 export const CONFIRMED_ROOT_RACING_ROOT_BUDGET = 120;
 export const CONFIRMED_ROOT_RACING_CEILING_BUDGET = 500;
@@ -99,10 +101,13 @@ function confirmationEvidence(fullRanked, leaderKey, candidateKey, config) {
   const combined = pairedRatedMoveDifference(combinedLeader, combinedCandidate);
   const fresh = pairedRatedMoveDifference(freshLeader, freshCandidate);
   const freshBatchGaps = batchGaps(freshLeader, freshCandidate, config.confirmationBatches);
+  const positiveAgreement = freshBatchGaps.filter((gap) => gap > 0).length / freshBatchGaps.length;
+  const nonnegativeAgreement = freshBatchGaps.filter((gap) => gap >= 0).length / freshBatchGaps.length;
   const confirmed = combined.gap >= config.minimumGap
     && combined.interval[0] > config.practicalGap
     && fresh.gap > config.minimumFreshGap
-    && freshBatchGaps.every((gap) => gap > 0);
+    && positiveAgreement >= (config.minimumFreshPositiveBatchAgreement ?? 1)
+    && nonnegativeAgreement >= (config.minimumFreshNonnegativeBatchAgreement ?? 1);
   return {
     key: candidateKey,
     confirmed,
@@ -111,6 +116,8 @@ function confirmationEvidence(fullRanked, leaderKey, candidateKey, config) {
     freshGap: fresh.gap,
     freshInterval: fresh.interval,
     freshBatchGaps,
+    positiveAgreement,
+    nonnegativeAgreement,
   };
 }
 
