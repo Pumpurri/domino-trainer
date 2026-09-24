@@ -651,3 +651,11 @@ Both the 120- and 500-sample budgets must pass every locked check:
 - Multi-option-set lower bound at least 5%, proving the candidate was exercised.
 
 Passing both budgets authorizes the uncertainty-aware report, Mistake Lab acceptance, progress labels, and information-safe export fields. Failure at one budget limits any promotion to the budget that passes, followed by the complete automated test suite and production build.
+
+### Uncertainty-aware coaching result
+
+The full validation completed all 200 positions and 2,000 fixed-budget trials. The candidate passed every coverage, repeatability, false-accusation, and exercise check at both budgets. At 120 samples, its set covered the independent reference leader in 99.0% of trials, retained a shared option across five repetitions on 99.5% of positions, and reduced false accusations from 1.5% to 0.6%. At 500 samples, those figures were 99.9%, 100%, and 1.0% versus the current 2.4% false-accusation rate.
+
+The candidate nevertheless failed the locked breadth checks. At 120 samples, the mean set-size upper interval was 2.63 rather than at most 2.5, and 62.6% of trials accepted every legal move. At 500 samples, mean set size passed at 2.03, but 45.3% of trials still accepted every legal move. The broad-set rate was not limited to ordinary two-choice positions: among positions with at least three legal moves, it was 48.1% at 120 samples and 29.4% at 500 samples.
+
+Because the breadth gate was locked before opening the corpus, neither budget is promoted. The live report, Deep Review, Mistake Lab, progress labels, and exports retain their existing single-recommendation behavior. The candidate remains available only to the benchmark harness. Any follow-up must define a narrower set rule on a development corpus and pass a separately seeded holdout. Complete evidence is stored in `benchmarks/uncertainty-coach-v1-200.json` and `benchmarks/uncertainty-coach-v1-200.md`.

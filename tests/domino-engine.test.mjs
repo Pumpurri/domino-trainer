@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assessDecisionOptions,
   analyzeMoves,
   applyMove,
   applyPass,
@@ -557,7 +558,7 @@ test('deep review replaces live recommendations and marks changed positions unst
   assert.equal(stable.unstableDecisions, 0);
 });
 
-test('review accepts statistically tied moves as strong options', () => {
+test('uncertainty-aware candidate accepts statistically tied moves as strong options', () => {
   const option = (key, winRate, wins) => {
     const [tileId, side] = key.split(':');
     const [a, b] = tileId.split('-').map(Number);
@@ -573,64 +574,12 @@ test('review accepts statistically tied moves as strong options', () => {
   const alternativeWins = Array.from({ length: 100 }, (_, index) => index < 50 ? 1 : 0);
   const top = option('1-5:left', 51, topWins);
   const alternative = option('1-2:left', 50, alternativeWins);
-  const record = {
-    id: 'strong-options-1', round: 1, eventCount: 0, phase: 'middle',
-    hand: [tile(1, 5), tile(1, 2)], handSizes: [2, 2, 2], ends: [1, 9],
-    chosenKey: alternative.key, bestKey: top.key, options: [top, alternative],
-    knownEvidence: [], inferredEvidence: [], beliefs: [], beliefConfidence: 'high',
-    publicState: { chain: [placed('1-9', 1, 9)], starter: 0, voids: [[], [], []], consecutivePasses: 0, events: [] },
-    probabilityForecasts: [], styleProfiles: [], recommendationReason: 'Both routes remain viable.',
-  };
-  const finalGame = playingGame({
-    phase: 'roundEnd', round: 1, hands: [[tile(0, 0)], [tile(3, 4)], [tile(6, 7)]],
-    result: { winner: 1, reason: 'empty', pips: [0, 7, 13], matchWinner: null },
-  });
-  const review = buildRoundReview(finalGame, [record]);
-  const decision = review.decisions[0];
+  const decision = assessDecisionOptions([top, alternative], top.key, alternative.key);
 
   assert.equal(decision.verdict, 'close');
   assert.equal(decision.assessment, 'acceptable');
   assert.equal(decision.recommendationConfidence, 'uncertain');
   assert.deepEqual(decision.plausibleBestKeys, [top.key, alternative.key]);
-  assert.equal(review.biggestMistake, null);
-  assert.match(decision.uncertainty, /2 moves remain strong options/);
-});
-
-test('deep review treats overlapping strong-option sets as agreement', () => {
-  const option = (key, wins) => {
-    const [tileId, side] = key.split(':');
-    const [a, b] = tileId.split('-').map(Number);
-    return {
-      key, tile: tile(a, b), side, newLeft: b, newRight: 9,
-      winRate: wins.reduce((sum, value) => sum + value, 0), margin: 5,
-      samples: wins.length, nextPassRate: 20, blockedWinRate: 10,
-      emptyWinRate: 30, averagePipsWhenLosing: 12, retainedEndMatches: 1,
-      returnRate: 0.5, pairedWins: wins, pairedWeights: wins.map(() => 1),
-    };
-  };
-  const first = option('1-5:left', Array.from({ length: 100 }, (_, index) => index < 51 ? 1 : 0));
-  const second = option('1-2:left', Array.from({ length: 100 }, (_, index) => index < 50 ? 1 : 0));
-  const base = {
-    id: 'set-agreement-1', round: 1, eventCount: 0, phase: 'middle',
-    hand: [tile(1, 5), tile(1, 2)], handSizes: [2, 2, 2], ends: [1, 9],
-    chosenKey: first.key, bestKey: first.key, options: [first, second],
-    knownEvidence: [], inferredEvidence: [], beliefs: [], beliefConfidence: 'high',
-    publicState: { chain: [placed('1-9', 1, 9)], starter: 0, voids: [[], [], []], consecutivePasses: 0, events: [] },
-    probabilityForecasts: [], styleProfiles: [], recommendationReason: 'Close alternatives.',
-  };
-  const deep = { ...base, bestKey: second.key, options: [second, first] };
-  const finalGame = playingGame({
-    phase: 'roundEnd', round: 1, hands: [[tile(0, 0)], [tile(3, 4)], [tile(6, 7)]],
-    result: { winner: 1, reason: 'empty', pips: [0, 7, 13], matchWinner: null },
-  });
-  const report = buildDeepReviewReport(finalGame, [base], [deep], [base.id], 500);
-
-  assert.equal(report.agreed, 1);
-  assert.equal(report.changedRecommendations, 0);
-  assert.equal(report.comparisons[0].exactTopAgreement, false);
-  assert.deepEqual(report.comparisons[0].livePlausibleBestKeys.sort(), [first.key, second.key].sort());
-  assert.deepEqual(report.comparisons[0].deepPlausibleBestKeys.sort(), [first.key, second.key].sort());
-  assert.equal(report.comparisons[0].unstable, true);
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {

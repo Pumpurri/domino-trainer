@@ -203,11 +203,6 @@ export type DecisionReview = {
   chosen: DecisionOption;
   best: DecisionOption;
   verdict: DecisionVerdict;
-  assessment: DecisionAssessment;
-  plausibleBestKeys: string[];
-  recommendationConfidence: 'clear' | 'uncertain';
-  batchAgreement: number;
-  practicalBatchAgreement: number;
   winRateGap: number;
   interval: [number, number];
   confidence: BeliefConfidence;
@@ -235,11 +230,8 @@ export type DeepDecisionComparison = {
   recordId: string;
   analyzed: true;
   agreed: boolean;
-  exactTopAgreement: boolean;
   liveBestKey: string;
   deepBestKey: string;
-  livePlausibleBestKeys: string[];
-  deepPlausibleBestKeys: string[];
   liveVerdict: DecisionVerdict;
   deepVerdict: DecisionVerdict;
   liveWinRateGap: number;
@@ -3172,38 +3164,33 @@ function simulatedComparison(best: DecisionOption, chosen: DecisionOption): stri
 function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview {
   const chosen = record.options.find((option) => option.key === record.chosenKey)!;
   const best = record.options.find((option) => option.key === record.bestKey)!;
-  const assessmentResult = assessDecisionOptions(record.options, record.bestKey, record.chosenKey);
-  const {
-    verdict,
-    assessment,
-    plausibleBestKeys,
-    recommendationConfidence,
-    batchAgreement,
-    practicalBatchAgreement,
-  } = assessmentResult;
+  const difference = pairedDifference(best, chosen);
+  const definitelyWorse = best.key !== chosen.key && difference.interval[0] > 0;
+  const verdict: DecisionVerdict = best.key === chosen.key
+    ? 'best'
+    : !definitelyWorse || difference.gap < 3
+      ? 'close'
+      : difference.gap < 10
+        ? 'slight'
+        : difference.gap < 20
+          ? 'mistake'
+          : 'big-mistake';
   const confidence: BeliefConfidence = verdict === 'close' || record.beliefConfidence === 'low'
     ? 'low'
-    : assessmentResult.interval[0] >= 5 && chosen.samples >= 60
+    : difference.interval[0] >= 5 && chosen.samples >= 60
       ? 'high'
       : 'moderate';
   const audit = beliefAudit(record, actualHandsAtDecision(finalGame, record.eventCount));
-  const uncertainty = assessment === 'acceptable' && plausibleBestKeys.length > 1
-    ? `${plausibleBestKeys.length} moves remain strong options because the simulation could not separate them by more than a practical one-point margin.`
-    : verdict === 'close'
-      ? `The paired 95% difference interval was ${Math.round(assessmentResult.interval[0])} to ${Math.round(assessmentResult.interval[1])} points, but the evidence was not consistent enough to call this a mistake.`
-      : `The paired 95% difference interval was ${Math.round(assessmentResult.interval[0])} to ${Math.round(assessmentResult.interval[1])} points, with the stronger move leading in ${Math.round(batchAgreement * 100)}% of four evidence groups.`;
+  const uncertainty = verdict === 'close'
+    ? `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points, so this is not a reliable mistake.`
+    : `The paired 95% difference interval was ${Math.round(difference.interval[0])} to ${Math.round(difference.interval[1])} points. This supports the comparison, but it does not guarantee the alternate move would win this exact round.`;
   return {
     record,
     chosen,
     best,
     verdict,
-    assessment,
-    plausibleBestKeys,
-    recommendationConfidence,
-    batchAgreement,
-    practicalBatchAgreement,
-    winRateGap: assessmentResult.gap,
-    interval: assessmentResult.interval,
+    winRateGap: difference.gap,
+    interval: difference.interval,
     confidence,
     known: record.knownEvidence[0] ?? 'No opponent void had been proven yet.',
     inferred: record.inferredEvidence[0] ?? 'The hidden-hand model had no strong directional read yet.',
@@ -3312,17 +3299,16 @@ export function buildDeepReviewReport(
     const live = liveDecisions.get(recordId);
     const deep = deepDecisions.get(recordId);
     if (!live || !deep || !deepById.has(recordId)) return [];
-    const agreed = live.plausibleBestKeys.some((key) => deep.plausibleBestKeys.includes(key));
-    const recommendationIsUncertain = deep.recommendationConfidence === 'uncertain';
+    const agreed = live.best.key === deep.best.key;
+    const runnerUp = deep.record.options.find((option) => option.key !== deep.best.key);
+    const recommendationInterval = runnerUp ? pairedDifference(deep.best, runnerUp).interval : null;
+    const recommendationIsUncertain = recommendationInterval ? recommendationInterval[0] <= 0 : false;
     return [{
       recordId,
       analyzed: true,
       agreed,
-      exactTopAgreement: live.best.key === deep.best.key,
       liveBestKey: live.best.key,
       deepBestKey: deep.best.key,
-      livePlausibleBestKeys: [...live.plausibleBestKeys],
-      deepPlausibleBestKeys: [...deep.plausibleBestKeys],
       liveVerdict: live.verdict,
       deepVerdict: deep.verdict,
       liveWinRateGap: live.winRateGap,
