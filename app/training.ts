@@ -46,6 +46,7 @@ export type TrainingExample = {
   chosenKey: string;
   bestKey: string;
   verdict: DecisionReview['verdict'];
+  recommendationConfidence?: DecisionReview['recommendationConfidence'];
   estimatedWinRateLost: number;
   differenceInterval: [number, number];
   beliefConfidence: DecisionReview['confidence'];
@@ -217,6 +218,11 @@ export function parseTrainingProgress(serialized: string | null): TrainingProgre
       examples: Array.isArray(parsed.examples) ? parsed.examples.slice(-300).map((example) => ({
         ...example,
         analysisQuality: example.analysisQuality === 'deep' ? 'deep' : 'live',
+        recommendationConfidence: example.recommendationConfidence === 'clear'
+          ? 'clear'
+          : example.recommendationConfidence === 'close'
+            ? 'close'
+            : undefined,
       })) : [],
     };
   } catch {
@@ -272,6 +278,7 @@ function trainingExample(
     chosenKey: record.chosenKey,
     bestKey: record.bestKey,
     verdict: decision.verdict,
+    recommendationConfidence: decision.recommendationConfidence,
     estimatedWinRateLost: Math.max(0, decision.winRateGap),
     differenceInterval: [...decision.interval],
     beliefConfidence: decision.confidence,

@@ -78,6 +78,9 @@ function reviewWithGap(gap) {
     winRateGap: gap,
     interval: [Math.max(1, gap - 3), gap + 3],
     confidence: 'high',
+    recommendationConfidence: 'clear',
+    recommendationGap: gap,
+    recommendationInterval: [Math.max(1, gap - 3), gap + 3],
     known: record.knownEvidence[0],
     inferred: 'No soft read.',
     simulated: 'The better move forced more passes.',
@@ -253,6 +256,7 @@ test('dataset export excludes revealed opponent hands and keeps safe decision la
   const exported = serializeTrainingDataset(progress, '2026-09-03T00:00:00.000Z');
   assert.ok(exported.includes('mesa-quince-information-safe-v2'));
   assert.ok(exported.includes('1-6:left'));
+  assert.ok(exported.includes('"recommendationConfidence": "clear"'));
   assert.ok(!exported.includes('SECRET-HIDDEN'));
   assert.ok(!exported.includes('opponentStartingHands'));
   assert.ok(!exported.includes('pairedWins'));

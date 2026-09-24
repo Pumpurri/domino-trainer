@@ -4,12 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import AnalyzerWorker from './analyzer.worker?worker';
 import {
   analyzeMoves as analyzeSmartMoves,
+  assessRecommendationConfidence,
   buildDeepReviewReport,
   buildRoundReview,
   chooseBotMove as chooseSmartBotMove,
   createDecisionRecord,
   createBeliefState,
   decisionGameFromRecord,
+  decisionOptionFromRatedMove,
   createOpponentStyles,
   describeOpponentStyle,
   estimateBeliefs as estimateSmartBeliefs,
@@ -298,6 +300,10 @@ function verdictLabel(verdict: RoundReview['decisions'][number]['verdict']): str
   return 'Big mistake';
 }
 
+function recommendationConfidenceLabel(confidence: DecisionReview['recommendationConfidence']): string {
+  return confidence === 'clear' ? 'Clear recommendation' : 'Close call';
+}
+
 function RoundReviewPanel({
   review,
   deepReview,
@@ -367,7 +373,7 @@ function RoundReviewPanel({
         <summary>
           <span>Decision {index + 1} · {decision.record.phase}</span>
           <b>{reviewMoveLabel(decision.chosen)}</b>
-          <em>{verdictLabel(decision.verdict)}</em>
+          <em>{verdictLabel(decision.verdict)} · {recommendationConfidenceLabel(decision.recommendationConfidence)}</em>
         </summary>
         <div className="evidence-grid">
           {comparison && <p className={`deep-comparison ${comparison.unstable ? 'unstable' : 'stable'}`}><strong>Live versus deep</strong>{comparison.agreed
@@ -376,6 +382,9 @@ function RoundReviewPanel({
           <p><strong>Known</strong>{decision.known}</p>
           <p><strong>Inferred</strong>{decision.inferred}</p>
           <p><strong>Simulated</strong>{decision.simulated}</p>
+          <p><strong>Recommendation</strong>{decision.recommendationConfidence === 'clear'
+            ? 'Clear recommendation. The paired evidence separated the leading move from its runner-up.'
+            : 'Close call. The leading move did not separate reliably enough from its runner-up.'}</p>
           <p><strong>Uncertain</strong>{decision.uncertainty}</p>
           <p className="revealed-evidence"><strong>Revealed afterward</strong>{decision.revealed}</p>
           {decision.record.options.length > 1 && <button className="practice-link evidence-practice" type="button" onClick={() => onPractice(decision)}>Practice this decision</button>}
@@ -441,7 +450,7 @@ function PracticeOverlay({
     ? practice.decision.known
     : practice.drill.knownRead;
   const explanation = isMistake
-    ? `${practice.decision.simulated} ${practice.decision.record.recommendationReason}`
+    ? `${recommendationConfidenceLabel(practice.decision.recommendationConfidence)}. ${practice.decision.simulated} ${practice.decision.record.recommendationReason}`
     : practice.drill.explanation;
   return <div className="training-scrim">
     <section className="practice-overlay" aria-modal="true" role="dialog">
@@ -995,6 +1004,13 @@ export default function Home() {
       const ranked = await analyzeCurrentDecision();
       const chosen = ranked.find((candidate) => candidate.tile.id === move.tile.id && candidate.side === move.side) ?? ranked[0];
       const best = ranked[0];
+      const recommendationConfidence = assessRecommendationConfidence(
+        ranked.map(decisionOptionFromRatedMove),
+        `${best.tile.id}:${best.side}`,
+      ).confidence;
+      const recommendationLabel = recommendationConfidence === 'clear'
+        ? 'Clear recommendation'
+        : 'Close call';
       const gap = best.winRate - chosen.winRate;
       const sameAsBest = best.tile.id === chosen.tile.id && best.side === chosen.side;
       const comparison = sameAsBest ? ranked[1] : best;
@@ -1008,7 +1024,7 @@ export default function Home() {
         : sameAsBest
           ? explainSmartMove(game, chosen, comparison)
           : `${explainSmartMove(game, best, chosen)} Your move's estimated win rate was ${Math.round(gap)} percentage points lower.`;
-      const stat = `${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} paired rollouts · ${chosen.treeSearch.visits} deep visits`;
+      const stat = `${recommendationLabel} · ${Math.round(chosen.winRate)}% estimated win chance ±${Math.ceil(chosen.margin)} · ${chosen.samples} paired rollouts · ${chosen.treeSearch.visits} deep visits`;
       const record = createDecisionRecord(
         game,
         ranked,
@@ -1033,9 +1049,11 @@ export default function Home() {
           simulated: sameAsBest
             ? `${move.tile.a}–${move.tile.b} led at ${Math.round(chosen.winRate)}% estimated wins.`
             : `${best.tile.a}–${best.tile.b} led ${Math.round(best.winRate)}% to ${Math.round(chosen.winRate)}%.`,
-          uncertain: tooClose
-            ? 'The estimates overlap, so the coach is not calling this a mistake.'
-            : 'Simulation estimates describe repeated plausible deals, not a guaranteed result for this round.',
+          uncertain: recommendationConfidence === 'close'
+            ? 'The recommended move is a close call because its paired advantage over the runner-up is not reliably larger than 1.5 percentage points.'
+            : tooClose
+              ? 'The recommendation itself is clear, but the coach is preserving the existing close grading for your move.'
+              : 'The recommendation is clear in paired simulations, but it does not guarantee the result of this exact round.',
         },
       });
     } catch {
@@ -1056,16 +1074,19 @@ export default function Home() {
       if (!ranked.length) return;
       const best = ranked[0];
       const second = ranked[1];
-      const combinedMargin = second ? Math.sqrt(best.margin ** 2 + second.margin ** 2) : 0;
-      const tooClose = second ? best.winRate - second.winRate <= Math.max(3, combinedMargin) : false;
+      const recommendationConfidence = assessRecommendationConfidence(
+        ranked.map(decisionOptionFromRatedMove),
+        `${best.tile.id}:${best.side}`,
+      ).confidence;
+      const isCloseCall = recommendationConfidence === 'close';
       setSelectedId(best.tile.id);
       setCoach({
         kind: 'hint',
-        title: tooClose
-          ? `${describeMove(best, game.chain.length)} and ${describeMove(second!, game.chain.length)} are close`
-          : `The simulations lean toward ${describeMove(best, game.chain.length)}`,
-        body: `${explainSmartMove(game, best, second)}${tooClose ? ' The top choices overlap statistically, so this is a preference, not a certainty.' : ''}`,
-        confidence: `${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} paired rollouts · ${best.treeSearch.visits} deep visits`,
+        title: isCloseCall
+          ? `Close call: lean toward ${describeMove(best, game.chain.length)}`
+          : `Clear recommendation: ${describeMove(best, game.chain.length)}`,
+        body: `${explainSmartMove(game, best, second)}${isCloseCall ? ' The paired evidence does not separate it reliably enough from the runner-up, so treat this as a preference.' : ''}`,
+        confidence: `${isCloseCall ? 'Close call' : 'Clear recommendation'} · ${Math.round(best.winRate)}% estimated win chance ±${Math.ceil(best.margin)} · ${best.samples} paired rollouts · ${best.treeSearch.visits} deep visits`,
       });
     } catch {
       setCoach({ kind: 'turn', message: 'The hint could not finish. You can still choose a legal tile.' });

@@ -555,6 +555,7 @@ test('deep review replaces live recommendations and marks changed positions unst
   assert.equal(report.unstableDecisions, 1);
   assert.equal(report.review.decisions[0].best.key, second.key);
   assert.equal(report.review.decisions[0].verdict, 'best');
+  assert.equal(report.review.decisions[0].recommendationConfidence, 'clear');
 
   const stable = buildDeepReviewReport(finalGame, [deepRecord], [deepRecord], [deepRecord.id], 500);
   assert.equal(stable.agreed, 1);
@@ -741,6 +742,8 @@ test('post-round review separates confident mistakes from revealed hindsight', (
   const review = buildRoundReview(finalGame, [record]);
 
   assert.equal(review.biggestMistake.verdict, 'big-mistake');
+  assert.equal(review.biggestMistake.recommendationConfidence, 'clear');
+  assert.equal(review.biggestMistake.recommendationInterval[0], 100);
   assert.equal(review.biggestMistake.interval[0], 100);
   assert.match(review.biggestMistake.revealed, /did hold 9/);
   assert.deepEqual(review.beliefChecks, { correct: 0, total: 1 });

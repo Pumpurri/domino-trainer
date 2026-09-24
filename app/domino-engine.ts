@@ -208,10 +208,11 @@ export type DecisionRecommendationEvidence = {
     topTwoBatchAgreement: number;
   } | null;
 };
+export type RecommendationConfidence = 'clear' | 'close';
 export type RecommendationConfidenceAssessment = {
   primaryKey: string;
   recommendationKeys: string[];
-  confidence: 'clear' | 'close';
+  confidence: RecommendationConfidence;
   gap: number | null;
   interval: [number, number] | null;
 };
@@ -232,6 +233,9 @@ export type DecisionReview = {
   winRateGap: number;
   interval: [number, number];
   confidence: BeliefConfidence;
+  recommendationConfidence: RecommendationConfidence;
+  recommendationGap: number | null;
+  recommendationInterval: [number, number] | null;
   known: string;
   inferred: string;
   simulated: string;
@@ -3296,6 +3300,7 @@ function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview
   const chosen = record.options.find((option) => option.key === record.chosenKey)!;
   const best = record.options.find((option) => option.key === record.bestKey)!;
   const difference = pairedDifference(best, chosen);
+  const recommendation = assessRecommendationConfidence(record.options, best.key);
   const definitelyWorse = best.key !== chosen.key && difference.interval[0] > 0;
   const verdict: DecisionVerdict = best.key === chosen.key
     ? 'best'
@@ -3323,6 +3328,9 @@ function reviewDecision(record: DecisionRecord, finalGame: Game): DecisionReview
     winRateGap: difference.gap,
     interval: difference.interval,
     confidence,
+    recommendationConfidence: recommendation.confidence,
+    recommendationGap: recommendation.gap,
+    recommendationInterval: recommendation.interval,
     known: record.knownEvidence[0] ?? 'No opponent void had been proven yet.',
     inferred: record.inferredEvidence[0] ?? 'The hidden-hand model had no strong directional read yet.',
     simulated: simulatedComparison(best, chosen),
@@ -3431,9 +3439,6 @@ export function buildDeepReviewReport(
     const deep = deepDecisions.get(recordId);
     if (!live || !deep || !deepById.has(recordId)) return [];
     const agreed = live.best.key === deep.best.key;
-    const runnerUp = deep.record.options.find((option) => option.key !== deep.best.key);
-    const recommendationInterval = runnerUp ? pairedDifference(deep.best, runnerUp).interval : null;
-    const recommendationIsUncertain = recommendationInterval ? recommendationInterval[0] <= 0 : false;
     return [{
       recordId,
       analyzed: true,
@@ -3444,7 +3449,10 @@ export function buildDeepReviewReport(
       deepVerdict: deep.verdict,
       liveWinRateGap: live.winRateGap,
       deepWinRateGap: deep.winRateGap,
-      unstable: !agreed || deep.verdict === 'close' || deep.record.beliefConfidence === 'low' || recommendationIsUncertain,
+      unstable: !agreed
+        || deep.verdict === 'close'
+        || deep.record.beliefConfidence === 'low'
+        || deep.recommendationConfidence === 'close',
     }];
   });
   const agreed = comparisons.filter((comparison) => comparison.agreed).length;

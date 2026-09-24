@@ -784,3 +784,20 @@ Passing both budgets authorizes adding only `Clear recommendation` and `Close ca
 caffeinate -i npm run benchmark:confidence:holdout:collect
 npm run benchmark:confidence:holdout:evaluate
 ```
+
+### Confidence-only coach holdout result
+
+The complete fresh holdout evaluated 200 balanced positions and 2,000 fixed-budget trials. The confidence-only candidate passed every locked aggregate and phase-safety check at both budgets.
+
+| Measure | 120 samples | 500 samples |
+| --- | ---: | ---: |
+| Clear-confidence rate | 18.0% [14.3, 22.0] | 31.1% [25.5, 36.7] |
+| Clear recommendations within one reference point | 98.9% [97.1, 100.0] | 100.0% [100.0, 100.0] |
+| Close calls within one reference point | 78.4% [74.6, 82.0] | 83.7% [79.9, 87.4] |
+| Clear quality advantage | 20.5 points [16.4, 24.5] | 16.3 points [12.7, 20.1] |
+| Confidence agreement with reference | 66.2% [60.5, 71.8] | 78.7% [73.8, 83.2] |
+| Repeat agreement | 84.6% [81.3, 87.7] | 86.1% [83.1, 89.1] |
+
+Every phase produced clear recommendations. At 120 samples, their within-one-point quality was 100% in opening and late play, 95% in middle play, and 98.8% in likely-block play. At 500 samples it was 100% in every phase. The primary recommendation remained unchanged and exactly one move was recommended on every trial by construction.
+
+The passing result authorizes the confidence wording now used by live hints, move feedback, the round report, Deep Review, Mistake Lab, saved progress examples, and information-safe exports. No move ranking or played-move verdict changed. Complete evidence is stored in `benchmarks/confidence-only-holdout-200.json` and `benchmarks/confidence-only-holdout-200.md`.
