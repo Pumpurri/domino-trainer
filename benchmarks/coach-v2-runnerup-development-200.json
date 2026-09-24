@@ -1,0 +1,962 @@
+{
+  "generatedAt": "2026-09-24T18:15:32.024Z",
+  "source": "outputs/coach-v2-development-200.raw.json",
+  "config": {
+    "seed": "mesa-quince-uncertainty-coach-v1",
+    "positions": 200,
+    "repetitions": 5,
+    "budgets": [
+      120,
+      500
+    ],
+    "referenceBudget": 5000,
+    "policiesEvaluated": 405
+  },
+  "selected": {
+    "policy": {
+      "maximumGap": 1.5,
+      "maximumLowerBound": 0,
+      "minimumTopTwoBatchAgreement": 1,
+      "maximumBatchGap": 2,
+      "minimumNearBatchAgreement": 1
+    },
+    "metrics": [
+      {
+        "budget": 120,
+        "trials": 1000,
+        "secondaryRate": 0.02,
+        "secondaryPrecision": 1,
+        "correctSecondaryRate": 0.02,
+        "incorrectSecondaryRate": 0,
+        "referenceTopCoverage": 0.713,
+        "primaryReferenceTopCoverage": 0.708,
+        "referenceTopCoverageGain": 0.005,
+        "meanRecommendationCount": 1.02,
+        "allLegalWideRate": 0,
+        "pairwiseSetJaccard": 0.641,
+        "secondaryPairAgreement": 1,
+        "secondaryPairs": 40
+      },
+      {
+        "budget": 500,
+        "trials": 1000,
+        "secondaryRate": 0.032,
+        "secondaryPrecision": 0.9375,
+        "correctSecondaryRate": 0.03,
+        "incorrectSecondaryRate": 0.002,
+        "referenceTopCoverage": 0.82,
+        "primaryReferenceTopCoverage": 0.811,
+        "referenceTopCoverageGain": 0.009,
+        "meanRecommendationCount": 1.032,
+        "allLegalWideRate": 0,
+        "pairwiseSetJaccard": 0.7585,
+        "secondaryPairAgreement": 0.8043478260869565,
+        "secondaryPairs": 46
+      }
+    ],
+    "passedDevelopment": false,
+    "score": 0.04704347826086956
+  },
+  "topCandidates": [
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 3,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 3,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 3,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.032,
+          "secondaryPrecision": 0.9375,
+          "correctSecondaryRate": 0.03,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.032,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7585,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04704347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.031,
+          "secondaryPrecision": 0.9354838709677419,
+          "correctSecondaryRate": 0.029,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.819,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.008,
+          "meanRecommendationCount": 1.031,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.031,
+          "secondaryPrecision": 0.9354838709677419,
+          "correctSecondaryRate": 0.029,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.819,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.008,
+          "meanRecommendationCount": 1.031,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 1,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.031,
+          "secondaryPrecision": 0.9354838709677419,
+          "correctSecondaryRate": 0.029,
+          "incorrectSecondaryRate": 0.002,
+          "referenceTopCoverage": 0.819,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.008,
+          "meanRecommendationCount": 1.031,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 1.5,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 2,
+        "maximumLowerBound": 1,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 3,
+        "maximumLowerBound": 0,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    },
+    {
+      "policy": {
+        "maximumGap": 3,
+        "maximumLowerBound": 0.5,
+        "minimumTopTwoBatchAgreement": 0.75,
+        "maximumBatchGap": 2,
+        "minimumNearBatchAgreement": 1
+      },
+      "metrics": [
+        {
+          "budget": 120,
+          "trials": 1000,
+          "secondaryRate": 0.02,
+          "secondaryPrecision": 1,
+          "correctSecondaryRate": 0.02,
+          "incorrectSecondaryRate": 0,
+          "referenceTopCoverage": 0.713,
+          "primaryReferenceTopCoverage": 0.708,
+          "referenceTopCoverageGain": 0.005,
+          "meanRecommendationCount": 1.02,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.641,
+          "secondaryPairAgreement": 1,
+          "secondaryPairs": 40
+        },
+        {
+          "budget": 500,
+          "trials": 1000,
+          "secondaryRate": 0.034,
+          "secondaryPrecision": 0.9117647058823529,
+          "correctSecondaryRate": 0.031,
+          "incorrectSecondaryRate": 0.003,
+          "referenceTopCoverage": 0.82,
+          "primaryReferenceTopCoverage": 0.811,
+          "referenceTopCoverageGain": 0.009,
+          "meanRecommendationCount": 1.034,
+          "allLegalWideRate": 0,
+          "pairwiseSetJaccard": 0.7575,
+          "secondaryPairAgreement": 0.8043478260869565,
+          "secondaryPairs": 46
+        }
+      ],
+      "passedDevelopment": false,
+      "score": 0.04604347826086956
+    }
+  ]
+}

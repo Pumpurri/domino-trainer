@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   assessDecisionOptions,
+  assessCoachV2Decision,
   analyzeMoves,
   applyMove,
   applyPass,
@@ -606,6 +607,38 @@ test('coach v2 evidence keeps one ranked runner-up and measures independent batc
   assert.equal(evidence.alternative.batchGaps.length, 4);
   assert.equal(evidence.alternative.topTwoBatchAgreement, 1);
   assert.ok(evidence.alternative.gap > 0);
+});
+
+test('coach v2 separates one recommendation from good, uncertain, and mistake labels', () => {
+  const option = (key, wins) => {
+    const [tileId, side] = key.split(':');
+    const [a, b] = tileId.split('-').map(Number);
+    return {
+      key, tile: tile(a, b), side, newLeft: b, newRight: 9,
+      winRate: wins.reduce((sum, value) => sum + value, 0) / wins.length * 100,
+      margin: 5, samples: wins.length, nextPassRate: 20,
+      blockedWinRate: 10, emptyWinRate: 30, averagePipsWhenLosing: 12,
+      retainedEndMatches: 1, returnRate: 0.5, pairedWins: wins,
+      pairedWeights: wins.map(() => 1),
+    };
+  };
+  const topWins = Array.from({ length: 200 }, (_, index) => index < 102 ? 1 : 0);
+  const closeWins = Array.from({ length: 200 }, (_, index) => index < 98 ? 1 : 0);
+  const top = option('1-5:left', topWins);
+  const close = option('1-2:left', closeWins);
+
+  const unresolved = assessCoachV2Decision([top, close], top.key, close.key);
+  assert.deepEqual(unresolved.recommendationKeys, [top.key]);
+  assert.equal(unresolved.recommendationConfidence, 'uncertain');
+  assert.equal(unresolved.assessment, 'uncertain');
+  assert.equal(unresolved.verdict, 'close');
+
+  const obviousTop = option('1-5:left', Array(100).fill(1));
+  const obviousMiss = option('1-2:left', Array(100).fill(0));
+  const mistake = assessCoachV2Decision([obviousTop, obviousMiss], obviousTop.key, obviousMiss.key);
+  assert.equal(mistake.recommendationConfidence, 'clear');
+  assert.equal(mistake.assessment, 'mistake');
+  assert.equal(mistake.verdict, 'big-mistake');
 });
 
 test('post-round review separates confident mistakes from revealed hindsight', () => {

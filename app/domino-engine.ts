@@ -208,6 +208,15 @@ export type DecisionRecommendationEvidence = {
     topTwoBatchAgreement: number;
   } | null;
 };
+export type CoachV2Assessment = {
+  primaryKey: string;
+  recommendationKeys: string[];
+  recommendationConfidence: 'clear' | 'uncertain';
+  verdict: DecisionVerdict;
+  assessment: DecisionAssessment;
+  gap: number;
+  interval: [number, number];
+};
 export type DecisionReview = {
   record: DecisionRecord;
   chosen: DecisionOption;
@@ -3041,6 +3050,7 @@ const recommendationPracticalGap = 1;
 const mistakeMinimumGap = 4;
 const mistakePracticalGap = 1.5;
 const mistakeBatchCount = 4;
+export const coachV2PracticalGap = 1.5;
 
 function pairedBatchGaps(best: DecisionOption, chosen: DecisionOption): number[] {
   if (best.key === chosen.key) return Array(mistakeBatchCount).fill(0);
@@ -3117,6 +3127,38 @@ export function decisionRecommendationEvidence(
       batchGaps,
       topTwoBatchAgreement,
     },
+  };
+}
+
+export function assessCoachV2Decision(
+  options: DecisionOption[],
+  bestKey: string,
+  chosenKey: string,
+): CoachV2Assessment {
+  const base = assessDecisionOptions(options, bestKey, chosenKey);
+  const recommendation = decisionRecommendationEvidence(options, bestKey);
+  const good = chosenKey === bestKey || base.gap <= coachV2PracticalGap;
+  const assessment: DecisionAssessment = good
+    ? 'acceptable'
+    : base.assessment === 'mistake'
+      ? 'mistake'
+      : 'uncertain';
+  const verdict: DecisionVerdict = chosenKey === bestKey
+    ? 'best'
+    : assessment === 'mistake'
+      ? base.verdict
+      : 'close';
+  return {
+    primaryKey: bestKey,
+    recommendationKeys: [bestKey],
+    recommendationConfidence: !recommendation.alternative
+      || recommendation.alternative.interval[0] > coachV2PracticalGap
+      ? 'clear'
+      : 'uncertain',
+    verdict,
+    assessment,
+    gap: base.gap,
+    interval: base.interval,
   };
 }
 

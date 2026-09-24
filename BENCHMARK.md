@@ -686,3 +686,41 @@ Eligible policies are ranked by the prespecified utility of correct runner-up ra
 caffeinate -i npm run benchmark:coach-v2:develop:collect
 npm run benchmark:coach-v2:develop:evaluate
 ```
+
+### Coach V2 development result
+
+The complete development replay evaluated 200 positions and 2,000 fixed-budget trials. No optional-runner-up policy passed the locked selection criteria. The strongest precision-first policy showed a runner-up on only 2.0% of 120-sample trials and 3.2% of 500-sample trials, below the required 5% exercise rate. Its shown runner-ups were accurate, with 100% and 93.8% point-estimate precision respectively, but the reference-leader coverage gains were only 0.5 and 0.9 percentage points. Looser rules could show alternatives more often only by sacrificing the required precision or repeatability. Optional runner-ups are therefore rejected rather than carried into a fresh holdout.
+
+The same development evidence supports a narrower Coach V2 that always keeps the existing single primary recommendation and separates two independent judgments:
+
+- Recommendation confidence is clear only when the paired 95% lower advantage over the runner-up exceeds 1.5 points. Otherwise the recommendation is explicitly a close call.
+- The played move is good when it is the primary move or its estimated gap is at most 1.5 points. It is a likely mistake only under the conservative four-batch rule validated in the earlier uncertainty study. Every other move is uncertain rather than praised or accused.
+
+At 120 samples, this policy reached 69.7% three-way label agreement, 93.5% good-label precision, a 0.6% false-accusation rate, and 98.7% within-one-point quality among clear recommendations. At 500 samples the corresponding figures were 84.0%, 96.5%, 1.0%, and 99.7%. The policy retains one recommendation by construction and uses no additional simulations. These are development results only.
+
+Complete compact development evidence is stored in `benchmarks/coach-v2-runnerup-development-200.json`, `benchmarks/coach-v2-runnerup-development-200.md`, `benchmarks/coach-v2-development-200.json`, and `benchmarks/coach-v2-development-200.md`.
+
+### Coach V2 single-recommendation holdout protocol
+
+The fresh seed `mesa-quince-coach-v2-holdout-v1` supplies 200 unseen positions, balanced across opening, middle, late, and likely-block play. Each position receives five independent runs at exactly 120 samples and five at exactly 500 samples, plus an independently seeded 5,000-sample reference. Nine workers may evaluate positions concurrently. Opponent hands and sleeping tiles are replaced before belief generation, and the candidate cannot inspect the realized hidden deal.
+
+The candidate changes no move ranking, sampling, rollout, opponent, or search logic. It must return exactly the existing top move as its only recommendation. The holdout evaluates the fixed 1.5-point confidence and good-move thresholds, the already fixed conservative mistake rule, and no other policies. Confidence intervals use 2,000 position-level bootstrap resamples.
+
+Both budgets must pass every locked check:
+
+- The primary move is unchanged on 100% of trials, and exactly one recommendation is returned on 100% of trials.
+- The false-accusation upper 95% bound is at most 2%, and its point estimate is no worse than the current coach.
+- The false-reassurance upper 95% bound is at most 3%.
+- The good-label precision lower 95% bound is at least 85%, and mistake-label precision is at least 80% by point estimate.
+- The three-way label-agreement lower 95% bound is at least 60%.
+- The decided-label coverage lower 95% bound is at least 55%, while the uncertainty-rate lower bound is at least 10%.
+- The clear-confidence rate lower bound is at least 10%.
+- Among clear recommendations, the within-one-reference-point lower bound is at least 90% and the point estimate is no worse than for close-call recommendations.
+- Confidence agreement with the 5,000-sample reference has a lower bound of at least 50%.
+
+Passing both budgets authorizes integrating only these Coach V2 communication semantics into live feedback, the round report, Deep Review, Mistake Lab, progress labels, and safe exports. It does not authorize optional runner-ups or any analyzer-policy change. A failure keeps the current product behavior.
+
+```sh
+caffeinate -i npm run benchmark:coach-v2:holdout:collect
+npm run benchmark:coach-v2:holdout:evaluate
+```
