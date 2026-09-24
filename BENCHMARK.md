@@ -458,3 +458,23 @@ caffeinate -i npm run benchmark:analyzer-rollout
 The study uses nine workers and atomic per-position checkpoints at `outputs/analyzer-rollout-v1-200.checkpoint`. Add `-- --resume` after an interruption.
 
 The first execution halted after checkpointing 161 positions, before any aggregate result was calculated or inspected. A highly constrained block position produced fewer valid hidden deals than its requested batch within the generic rejection sampler's eight-attempts-per-target ceiling. The protocol was amended without reducing any budget: benchmark sampling now deterministically expands its attempt target until it obtains the full requested number of valid deals, for at most four expansions. Each retry restarts the same seeded sequence, so it only extends the accepted sample prefix, and both policies still receive identical deals. Reference and adaptive outputs record how many expansions were required. The saved 161 positions need no recalculation because none encountered this condition.
+
+### Exhaustive-rollout analyzer promotion result
+
+The complete 200-position study evaluated 600 adaptive trials per policy. Exhaustive forecasting failed six locked checks and remains outside the live analyzer.
+
+| Measure | Current rollout | Exhaustive forecast |
+| --- | ---: | ---: |
+| Within one own-reference point | 94.2% | 93.5% |
+| Mean own-reference regret | 0.151 | 0.152 |
+| Mistake-label agreement | 94.2% | 94.0% |
+| False-positive mistakes | 0.7% | 0.2% |
+| Repeat acceptability | 86.0% | 85.0% |
+| Mean samples | 1,758.3 | 1,758.3 |
+| Mean wall time | 15.5 seconds | 17.4 seconds |
+
+Only 3.8% of recommendations changed, below the locked 5% exercise threshold. Cross-reference mean regret moved by +0.004 point with a 95% interval of [-0.020, 0.033], so exhaustive forecasting did not produce the required improvement after both reference models scored each choice. It also missed the 95% mistake-label target, the 90% repeat-acceptability target, repeat-acceptability noninferiority, and label preservation. Within-one-point quality, own-reference regret, false-accusation safety, phase robustness, exact-endgame agreement, sample use, and runtime cost all passed their limits.
+
+The high-budget current and exhaustive references agreed on 98% of positions. Differences concentrated in opening and middle play, where the candidate changed 6.0% and 7.3% of choices but slightly increased cross-reference regret. Late and likely-block changes were rare and slightly favorable. Exhaustive forecasting cost 12.4% more mean wall time, comfortably inside the 75% ceiling, so speed was not the reason for rejection.
+
+This result explains the earlier self-play gain without contradicting it: exhaustive forecasting is a stronger standalone move policy, but replacing simulated rollout choices barely changes the analyzer's root recommendations and does not improve their reference-robust quality. The live analyzer remains on the current shortlist-plus-forecast rollout. The complete evidence is stored in `benchmarks/analyzer-rollout-v1-200.json` and `benchmarks/analyzer-rollout-v1-200.md`.

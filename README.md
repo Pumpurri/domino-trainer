@@ -32,7 +32,7 @@ The V4 candidate-only refinement, V5 robust-selection, and V6 phase-aware sampli
 
 The completed paired sampler-ablation found no aggregation defect and no early-stopping effect on difficult positions. It found opposite sampling effects by phase: independent stage samples performed better in high-branching openings, while a persistent shared particle sequence performed better in wide middle-game decisions. No global sampling change or live-coach change was made.
 
-The completed 8,640-round rollout diagnostic selected exhaustive public forecasting as the only candidate to pass every locked check. It improved round win rate from 32.73% to 34.40%, a paired gain of 1.67 percentage points with a 95% interval of [0.08, 3.29]. A separately seeded 200-position promotion study now compares the current and exhaustive analyzers on matched hidden-deal evidence and scores their choices under both high-budget reference models. Live behavior remains unchanged until every locked quality and cost check passes.
+The completed 8,640-round rollout diagnostic found that exhaustive public forecasting was a stronger standalone policy, improving round win rate from 32.73% to 34.40%. Its separately seeded 200-position analyzer promotion study then failed six locked checks. It changed only 3.8% of recommendations, moved cross-reference regret by +0.004 point, reduced repeat acceptability from 86% to 85%, and increased mean runtime by 12.4%. The live analyzer therefore remains on the current shortlist-plus-forecast rollout.
 
 ## Run locally
 
