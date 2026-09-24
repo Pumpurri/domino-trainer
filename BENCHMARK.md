@@ -530,3 +530,29 @@ The candidate changed 5.6% of recommendations, improved repeat acceptability by 
 The sole failure was the locked requirement that mean sample use not increase. Current sampling stopped at 1,000 samples in four of 144 trials; stratified sampling stopped there in three. That one net extra 1,000-sample continuation increased the mean by 6.94 samples, or 0.35%. The paired interval was [-13.89, 27.78], so the result does not establish a systematic computation increase, but the preregistered zero-tolerance check still fails and cannot be relaxed after seeing the result.
 
 The forensic audit found an average of 23.4 plausible public-information strata per belief pool. Current representatives covered 99.8% of posterior mass and stratified representatives covered 100.0%, while the weighted 500-sample candidate retained 497.4 effective samples. The evidence supports a separately preregistered fixed-budget middle-game experiment, where both policies are forced to use identical 120- and 500-sample budgets and sample-use differences cannot be created by adaptive stopping. It does not authorize a 200-position promotion study yet. Complete evidence is stored in `benchmarks/stratified-sampling-v1-48.json` and `benchmarks/stratified-sampling-v1-48.md`.
+
+### Fixed-budget middle-game stratification protocol
+
+The follow-up study isolates the promising middle-game signal at the product's actual fixed budgets. The fresh seed `mesa-quince-fixed-stratified-middle-v1` supplies 60 unseen middle-game positions with at least four legal moves. Each position receives five independent repetitions at exactly 120 samples for the live-coach budget and exactly 500 samples for the Deep Review budget. Both samplers receive the same independently generated belief pool within every paired repetition. Evaluation order alternates by position, repetition, and budget.
+
+Each position also receives an independent 5,000-sample systematic reference. Results measure exact and acceptable top agreement, selection within one reference point, reference regret, repeat acceptability across all five repetitions, exact-top stability, mistake-label agreement, false-positive accusations, weighted effective sample count, and paired runtime. Confidence intervals resample complete positions. The benchmark replaces real opponent hands before generating any belief particles.
+
+The 120- and 500-sample budgets must each independently pass every locked check:
+
+- At least 5% of recommendations change, proving stratification affects the fixed-budget decision.
+- Repeat acceptability improves.
+- Mean reference regret declines.
+- Within-one-point quality declines by no more than one percentage point.
+- False-positive mistake calls do not increase.
+- Mistake-label agreement declines by no more than one percentage point.
+- Mean weighted effective samples remain at least 95% of the nominal budget.
+- Mean paired runtime increases by no more than 20%.
+- Every control and candidate trial uses exactly the requested nominal sample count.
+
+Both budgets must pass. Passing selects middle-only stratification for a fresh, balanced 200-position validation; it does not directly modify the live coach. Failing either budget keeps the current sampler and requires a separately preregistered revision.
+
+```sh
+caffeinate -i npm run benchmark:fixed-stratified
+```
+
+The run uses nine workers and atomic checkpoints at `outputs/fixed-stratified-middle-v1-60.checkpoint`. Add `-- --resume` after interruption.

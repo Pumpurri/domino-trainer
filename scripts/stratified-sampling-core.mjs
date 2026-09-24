@@ -31,7 +31,7 @@ export function collectStratifiedSamplingCorpus(options = {}) {
   return collectSamplerAblationCorpus(options);
 }
 
-function beliefForBudget(game, budget, seedSalt) {
+export function beliefForBudget(game, budget, seedSalt) {
   let target = particleCountForBudget(budget);
   let belief;
   let retries = 0;
@@ -47,7 +47,7 @@ function beliefForBudget(game, budget, seedSalt) {
   return { belief, target, retries };
 }
 
-function analyzeBelief(game, belief, target, budget, representativePolicy, rootCandidateKeys) {
+export function analyzeBelief(game, belief, target, budget, representativePolicy, rootCandidateKeys) {
   return analyzeMoves(game, target, belief, undefined, {
     representativeLimit: budget,
     representativePolicy,
