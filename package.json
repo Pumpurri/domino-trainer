@@ -37,6 +37,8 @@
     "benchmark:stratified-sampling:quick": "node --experimental-strip-types scripts/benchmark-stratified-sampling.mjs --quick",
     "benchmark:fixed-stratified": "node --experimental-strip-types scripts/benchmark-fixed-stratified.mjs --positions=60 --minimum-branching=4 --repetitions=5 --budgets=120,500 --reference-samples=5000 --confidence-resamples=1000 --workers=9 --seed=mesa-quince-fixed-stratified-middle-v1 --checkpoint=outputs/fixed-stratified-middle-v1-60.checkpoint --json=outputs/fixed-stratified-middle-v1-60.json --report=outputs/fixed-stratified-middle-v1-60.md",
     "benchmark:fixed-stratified:quick": "node --experimental-strip-types scripts/benchmark-fixed-stratified.mjs --quick",
+    "benchmark:deep-review-stratified": "node --experimental-strip-types scripts/benchmark-deep-review-stratified.mjs --middle-positions=100 --safety-positions-per-phase=20 --middle-minimum-branching=4 --repetitions=5 --samples=500 --reference-samples=5000 --confidence-resamples=2000 --workers=9 --seed=mesa-quince-deep-review-stratified-v1 --checkpoint=outputs/deep-review-stratified-v1-160.checkpoint --json=outputs/deep-review-stratified-v1-160.json --report=outputs/deep-review-stratified-v1-160.md",
+    "benchmark:deep-review-stratified:quick": "node --experimental-strip-types scripts/benchmark-deep-review-stratified.mjs --quick",
     "benchmark:v6:forensics": "node scripts/analyze-v6-changes.mjs",
     "benchmark:reliability:audit-labels": "node scripts/audit-coaching-labels.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"

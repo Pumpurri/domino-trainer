@@ -578,3 +578,33 @@ At 500 samples, stratification changed 20.7% of recommendations and passed all n
 The original gate implementation represented the inclusive negative one-point label boundary as a binary floating-point value microscopically below -0.01. The comparison was corrected with a numerical tolerance and a boundary regression test, without changing the locked threshold or any simulation result. This correction changes the 500-sample gate from fail to pass but cannot rescue the overall result because the 120-sample gate fails decisively.
 
 The next justified experiment is a separately preregistered Deep Review-only validation at 500 samples. The 120-sample live coach should retain systematic sampling. A Deep Review candidate must pass a larger fresh holdout before product integration. Complete evidence is stored in `benchmarks/fixed-stratified-middle-v1-60.json` and `benchmarks/fixed-stratified-middle-v1-60.md`.
+
+### Deep Review-only middle stratification holdout protocol
+
+The promotion holdout applies public-information stratification only to middle-game Deep Review. The live 120-sample coach and every opening, late, and likely-block decision retain current systematic sampling. The fresh seed `mesa-quince-deep-review-stratified-v1` supplies 100 difficult middle positions with at least four legal moves, plus 20 safety positions in each other phase, for 160 total positions.
+
+Every middle position receives five paired repetitions at exactly 500 samples. Current and candidate analyzers receive the same independently generated belief pool within a repetition, and evaluation order alternates. Recommendations are scored under two separately seeded 5,000-sample references, one using systematic representatives and one using public-information stratification. This prevents either representative policy from defining the sole target. Confidence intervals resample complete positions.
+
+The principal quality measures are average regret across both references, worst-reference regret, selection within one point under both references, repeat acceptability across all five repetitions, mistake-label agreement averaged across both references, and a conservative false-positive measure that counts an accusation as false when either reference rejects it. The study also measures effective samples and paired runtime. Non-middle safety positions must route to the current sampler and reuse the exact control analysis.
+
+The candidate passes only if every locked check succeeds:
+
+- At least 5% of middle recommendations change.
+- Repeat acceptability improves.
+- Mean two-reference regret declines and its paired upper 95% bound is no worse than +0.10 point.
+- Worst-reference mean regret rises by no more than 0.05 point.
+- Within-one-point-under-both quality declines by no more than one percentage point.
+- Conservative false-positive accusations do not increase.
+- Mean two-reference mistake-label agreement declines by no more than one percentage point.
+- Weighted effective samples remain at least 95% of 500.
+- Mean paired runtime increases by no more than 20%.
+- Every middle trial uses exactly 500 samples.
+- Opening, late, and likely-block routing has zero differences from control.
+
+Passing authorizes product integration of stratification only for 500-sample middle-game Deep Review, followed by the complete test suite and build. Failing keeps all current sampler behavior.
+
+```sh
+caffeinate -i npm run benchmark:deep-review-stratified
+```
+
+The run uses nine workers and atomic checkpoints at `outputs/deep-review-stratified-v1-160.checkpoint`. Add `-- --resume` after interruption.
