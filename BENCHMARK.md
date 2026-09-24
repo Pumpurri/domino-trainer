@@ -556,3 +556,25 @@ caffeinate -i npm run benchmark:fixed-stratified
 ```
 
 The run uses nine workers and atomic checkpoints at `outputs/fixed-stratified-middle-v1-60.checkpoint`. Add `-- --resume` after interruption.
+
+### Fixed-budget middle-game stratification result
+
+The complete study evaluated 60 fresh positions, 300 trials per fixed budget, and 600 paired sampler comparisons. The 120-sample candidate failed six substantive checks. The 500-sample candidate passed every check, but the locked protocol required both budgets to pass. The overall candidate therefore fails and the live coach remains unchanged.
+
+| Measure | 120 current | 120 stratified | 500 current | 500 stratified |
+| --- | ---: | ---: | ---: | ---: |
+| Within one reference point | 75.7% | 72.3% | 87.3% | 88.7% |
+| Mean reference regret | 0.847 | 1.070 | 0.384 | 0.363 |
+| Repeat acceptability | 38.3% | 33.3% | 61.7% | 65.0% |
+| Exact-top repeatability | 28.3% | 21.7% | 41.7% | 48.3% |
+| Mistake-label agreement | 85.3% | 84.7% | 91.3% | 90.3% |
+| False-positive mistakes | 2.0% | 2.3% | 2.7% | 2.3% |
+| Effective samples | 120.0 | 112.2 | 500.0 | 496.5 |
+
+At 120 samples, stratification changed 44.3% of recommendations but moved them in the wrong direction. Mean regret rose by 0.224 point, within-one-point quality fell by 3.3 percentage points, repeat acceptability fell by 5 points, false positives rose slightly, and weighted effective samples fell below the locked 95% requirement. Its mean paired runtime ratio was also 44.5% higher, although the interval was wide under multicore contention. This rejects stratification for the latency-sensitive live coach.
+
+At 500 samples, stratification changed 20.7% of recommendations and passed all nine checks. Mean regret declined by 0.021 point, within-one-point quality improved by 1.3 percentage points, repeat acceptability improved by 3.3 points, exact-top repeatability improved by 6.6 points, and false positives fell by 0.3 point. Label agreement declined by exactly the permitted one percentage point, effective samples remained at 99.3% of nominal, and the paired runtime ratio rose by 6.1%. The confidence intervals on the quality changes include zero, so this is a promising development signal rather than conclusive superiority.
+
+The original gate implementation represented the inclusive negative one-point label boundary as a binary floating-point value microscopically below -0.01. The comparison was corrected with a numerical tolerance and a boundary regression test, without changing the locked threshold or any simulation result. This correction changes the 500-sample gate from fail to pass but cannot rescue the overall result because the 120-sample gate fails decisively.
+
+The next justified experiment is a separately preregistered Deep Review-only validation at 500 samples. The 120-sample live coach should retain systematic sampling. A Deep Review candidate must pass a larger fresh holdout before product integration. Complete evidence is stored in `benchmarks/fixed-stratified-middle-v1-60.json` and `benchmarks/fixed-stratified-middle-v1-60.md`.
