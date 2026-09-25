@@ -59,6 +59,8 @@
     "benchmark:opening-balanced:quick": "node --experimental-strip-types scripts/benchmark-opening-balanced-sampling.mjs --quick",
     "benchmark:opening-balanced:refine": "node --experimental-strip-types scripts/benchmark-opening-balanced-refinement.mjs --positions=36 --minimum-branching=6 --repetitions=5 --samples=120 --reference-samples=5000 --confidence-resamples=1000 --workers=9 --seed=mesa-quince-opening-balanced-refinement-v2 --checkpoint=outputs/opening-balanced-refinement-v2-36.checkpoint --json=outputs/opening-balanced-refinement-v2-36.json --report=outputs/opening-balanced-refinement-v2-36.md",
     "benchmark:opening-balanced:refine:quick": "node --experimental-strip-types scripts/benchmark-opening-balanced-refinement.mjs --quick",
+    "benchmark:targeted-confirmation": "node --experimental-strip-types scripts/benchmark-targeted-systematic-confirmation.mjs --positions=24 --minimum-branching=6 --repetitions=5 --base-samples=120 --reference-samples=5000 --close-gap=3 --confidence-resamples=1000 --workers=9 --seed=mesa-quince-targeted-confirmation-v1 --checkpoint=outputs/targeted-confirmation-v1-24.checkpoint --json=outputs/targeted-confirmation-v1-24.json --report=outputs/targeted-confirmation-v1-24.md",
+    "benchmark:targeted-confirmation:quick": "node --experimental-strip-types scripts/benchmark-targeted-systematic-confirmation.mjs --quick",
     "benchmark:v6:forensics": "node scripts/analyze-v6-changes.mjs",
     "benchmark:reliability:audit-labels": "node scripts/audit-coaching-labels.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
