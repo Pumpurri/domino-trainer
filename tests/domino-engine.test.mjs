@@ -223,6 +223,9 @@ test('opening balance sampling is deterministic, weighted, and fills its exact b
   });
   const beliefs = createBeliefState(game, 0, 600, undefined, 'opening-balance-invariants');
   const policies = [
+    'opening-response-balanced-10',
+    'opening-response-balanced-20',
+    'opening-response-balanced-25',
     'opening-response-balanced-35',
     'opening-response-balanced-60',
     'opening-return-balanced-35',

@@ -81,6 +81,7 @@ export async function evaluateOpeningBalancedPosition(position, {
   referenceBudget = 5000,
   recommendationPracticalGap = 1,
   seed = 'mesa-quince-opening-balanced-development-v1',
+  variants = OPENING_BALANCED_VARIANTS,
 } = {}) {
   if (position.phase !== 'opening' || position.branching < 6) {
     throw new Error(`Position ${position.id} is outside the opening-balanced sampling scope.`);
@@ -112,18 +113,18 @@ export async function evaluateOpeningBalancedPosition(position, {
       budget,
       `${seed}|${position.id}|repeat-${repetition}|shared-pool`,
     );
-    const offset = (positionNumber + repetition) % OPENING_BALANCED_VARIANTS.length;
+    const offset = (positionNumber + repetition) % variants.length;
     const order = [
-      ...OPENING_BALANCED_VARIANTS.slice(offset),
-      ...OPENING_BALANCED_VARIANTS.slice(0, offset),
+      ...variants.slice(offset),
+      ...variants.slice(0, offset),
     ];
     const analyses = {};
     for (const policy of order) analyses[policy] = timedAnalysis(safeGame, sampled, budget, policy);
-    const variants = Object.fromEntries(OPENING_BALANCED_VARIANTS.map((policy) => [
+    const evaluated = Object.fromEntries(variants.map((policy) => [
       policy,
       evaluatedVariant(analyses[policy], position, reference, budget),
     ]));
-    trials.push({ repetition, variants });
+    trials.push({ repetition, variants: evaluated });
   }
 
   return {
@@ -232,7 +233,13 @@ function summarizeEffect(positions, candidate, seed, resamples) {
   };
 }
 
-export function openingBalancedCandidateGate(positions, candidate, result, budget = 120) {
+export function openingBalancedCandidateGate(
+  positions,
+  candidate,
+  result,
+  budget = 120,
+  minimumEffectiveSampleRatio = 0.90,
+) {
   const tolerance = 1e-12;
   const checks = {
     exercised: result.selectionChangeRate.mean >= 0.05 - tolerance,
@@ -241,7 +248,7 @@ export function openingBalancedCandidateGate(positions, candidate, result, budge
     repeatAcceptabilityNoninferior: result.effect.repeatAcceptability.mean >= -tolerance,
     labelsPreserved: result.effect.mistakeLabelAgreement.mean >= -0.01 - tolerance,
     falsePositivesDoNotIncrease: result.effect.falsePositiveMistake.mean <= tolerance,
-    effectiveSamplesPreserved: result.candidate.effectiveSamples.mean >= budget * 0.90 - tolerance,
+    effectiveSamplesPreserved: result.candidate.effectiveSamples.mean >= budget * minimumEffectiveSampleRatio - tolerance,
     runtimeControlled: result.effect.runtimeRatio.mean <= 0.30 + tolerance,
     exactSampleBudget: positions.every((position) => position.trials.every((trial) => (
       trial.variants[candidate].exactSampleBudget
@@ -257,10 +264,13 @@ export function summarizeOpeningBalanced(positions, {
   seed = 'mesa-quince-opening-balanced-development-v1',
   confidenceResamples = 1000,
   budget = 120,
+  version = OPENING_BALANCED_VERSION,
+  candidates: candidateIds = OPENING_BALANCED_CANDIDATES,
+  minimumEffectiveSampleRatio = 0.90,
 } = {}) {
   const control = summarizeVariant(positions, OPENING_BALANCED_CONTROL, `${seed}|control`, confidenceResamples);
   const candidates = {};
-  for (const candidate of OPENING_BALANCED_CANDIDATES) {
+  for (const candidate of candidateIds) {
     const candidateSummary = summarizeVariant(positions, candidate, `${seed}|${candidate}`, confidenceResamples);
     const effect = summarizeEffect(positions, candidate, seed, confidenceResamples);
     const selectionChangeRate = interval(positions.map((position) => (
@@ -269,16 +279,22 @@ export function summarizeOpeningBalanced(positions, {
       )).length / position.trials.length
     )), `${seed}|${candidate}|selection-change`, confidenceResamples);
     const result = { candidate: candidateSummary, effect, selectionChangeRate };
-    result.gate = openingBalancedCandidateGate(positions, candidate, result, budget);
+    result.gate = openingBalancedCandidateGate(
+      positions,
+      candidate,
+      result,
+      budget,
+      minimumEffectiveSampleRatio,
+    );
     candidates[candidate] = result;
   }
-  const passing = OPENING_BALANCED_CANDIDATES.filter((candidate) => candidates[candidate].gate.passed)
+  const passing = candidateIds.filter((candidate) => candidates[candidate].gate.passed)
     .sort((left, right) => (
       candidates[left].effect.meanRegret.mean - candidates[right].effect.meanRegret.mean
       || candidates[right].effect.withinOnePoint.mean - candidates[left].effect.withinOnePoint.mean
     ));
   return {
-    version: OPENING_BALANCED_VERSION,
+    version,
     positions: positions.length,
     budget,
     control,

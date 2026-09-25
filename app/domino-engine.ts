@@ -44,6 +44,9 @@ export type AnalyzerRolloutPolicy = Extract<RolloutPolicy, 'current' | 'exhausti
 export type RepresentativePolicy =
   | 'systematic'
   | 'public-stratified'
+  | 'opening-response-balanced-10'
+  | 'opening-response-balanced-20'
+  | 'opening-response-balanced-25'
   | 'opening-response-balanced-35'
   | 'opening-response-balanced-60'
   | 'opening-return-balanced-35'
@@ -1425,6 +1428,9 @@ function openingBalancePolicy(policy: RepresentativePolicy): {
   strength: number;
 } | null {
   switch (policy) {
+    case 'opening-response-balanced-10': return { mode: 'response', strength: 0.1 };
+    case 'opening-response-balanced-20': return { mode: 'response', strength: 0.2 };
+    case 'opening-response-balanced-25': return { mode: 'response', strength: 0.25 };
     case 'opening-response-balanced-35': return { mode: 'response', strength: 0.35 };
     case 'opening-response-balanced-60': return { mode: 'response', strength: 0.6 };
     case 'opening-return-balanced-35': return { mode: 'return', strength: 0.35 };
