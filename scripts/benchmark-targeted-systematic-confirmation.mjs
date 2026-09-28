@@ -59,6 +59,11 @@ function candidateSection(candidate, result) {
 
 Recommendation change rate: **${percent(result.selectionChangeRate)}**
 
+- Triggered trials: ${result.forensicCounts.triggered}/${result.forensicCounts.trials}
+- Reference-best misses within triggered trials: ${result.forensicCounts.referenceBestMisses}/${result.forensicCounts.triggered}
+- Reference-best coverage within triggered trials: ${percent(result.candidate.referenceBestCoverage)}
+- False-positive transitions: ${result.forensicCounts.addedFalsePositives} added, ${result.forensicCounts.removedFalsePositives} removed
+
 | Within-1 delta | Regret delta | Repeat delta | Label delta | False-positive delta | Effective-sample delta |
 | ---: | ---: | ---: | ---: | ---: | ---: |
 | ${percent(result.effect.withinOnePoint)} | ${points(result.effect.meanRegret)} | ${percent(result.effect.repeatAcceptability)} | ${percent(result.effect.mistakeLabelAgreement)} | ${percent(result.effect.falsePositiveMistake)} | ${points(result.effect.selectedEffectiveSamples)} |

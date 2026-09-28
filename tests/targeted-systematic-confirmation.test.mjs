@@ -48,6 +48,8 @@ test('targeted confirmation gives the recommendation and played move equal fresh
   assert.equal(summary.triggerRate.mean, 1);
   for (const candidate of candidates) {
     assert.equal(summary.candidates[candidate.id].gate.checks.exactAndEqualDecisionEvidence, true);
+    assert.equal(summary.candidates[candidate.id].forensicCounts.triggered, 1);
+    assert.equal(summary.candidates[candidate.id].forensicCounts.trials, 1);
   }
 });
 

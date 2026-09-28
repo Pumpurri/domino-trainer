@@ -269,6 +269,27 @@ function interval(values, seed, resamples) {
   return { mean, low: percentile(estimates, 0.025), high: percentile(estimates, 0.975) };
 }
 
+function ratioInterval(parts, seed, resamples) {
+  const ratio = (values) => {
+    const numerator = values.reduce((sum, value) => sum + value.numerator, 0);
+    const denominator = values.reduce((sum, value) => sum + value.denominator, 0);
+    return denominator ? numerator / denominator : 0;
+  };
+  const mean = ratio(parts);
+  if (parts.length < 2 || resamples <= 0) return { mean, low: mean, high: mean };
+  const random = seededRandom(seed);
+  const estimates = [];
+  for (let sample = 0; sample < resamples; sample += 1) {
+    const drawn = [];
+    for (let draw = 0; draw < parts.length; draw += 1) {
+      drawn.push(parts[Math.floor(random() * parts.length)]);
+    }
+    estimates.push(ratio(drawn));
+  }
+  estimates.sort((left, right) => left - right);
+  return { mean, low: percentile(estimates, 0.025), high: percentile(estimates, 0.975) };
+}
+
 function positionMeans(positions, variant, read) {
   return positions.map((position) => {
     const values = position.trials.map((trial) => read(trial.variants[variant]));
@@ -282,6 +303,13 @@ function summarizeVariant(positions, variant, seed, resamples) {
     `${seed}|${variant}|${label}`,
     resamples,
   );
+  const triggeredReferenceCoverage = positions.map((position) => {
+    const triggered = position.trials.filter((trial) => trial.variants[variant].triggered);
+    return {
+      numerator: triggered.filter((trial) => trial.variants[variant].referenceBestCovered).length,
+      denominator: triggered.length,
+    };
+  });
   return {
     exactTopAgreement: metric('exact-top', (trial) => trial.exactTopAgreement ? 1 : 0),
     acceptableTopAgreement: metric('acceptable-top', (trial) => trial.acceptableTopAgreement ? 1 : 0),
@@ -293,7 +321,11 @@ function summarizeVariant(positions, variant, seed, resamples) {
     selectedEffectiveSamples: metric('effective-samples', (trial) => trial.selectedEffectiveSamples),
     overheadRatio: metric('overhead', (trial) => trial.overheadRatio),
     elapsedMs: metric('elapsed', (trial) => trial.elapsedMs),
-    referenceBestCoverage: metric('reference-coverage', (trial) => trial.referenceBestCovered ? 1 : 0),
+    referenceBestCoverage: ratioInterval(
+      triggeredReferenceCoverage,
+      `${seed}|${variant}|triggered-reference-coverage`,
+      resamples,
+    ),
     repeatAcceptability: interval(positions.map((position) => (
       position.trials.every((trial) => trial.variants[variant].withinOnePoint) ? 1 : 0
     )), `${seed}|${variant}|repeat-acceptable`, resamples),
@@ -373,7 +405,25 @@ export function summarizeTargetedConfirmation(positions, {
         trial.variants[candidate.id].topKey !== trial.variants[TARGETED_CONFIRMATION_CONTROL].topKey
       )).length / position.trials.length
     )), `${seed}|${candidate.id}|selection-change`, confidenceResamples);
-    const result = { candidate: candidateSummary, effect, selectionChangeRate, triggerRate };
+    const transitions = positions.flatMap((position) => position.trials.map((trial) => ({
+      control: trial.variants[TARGETED_CONFIRMATION_CONTROL].falsePositiveMistake,
+      candidate: trial.variants[candidate.id].falsePositiveMistake,
+      triggered: trial.variants[candidate.id].triggered,
+      covered: trial.variants[candidate.id].referenceBestCovered,
+    })));
+    const result = {
+      candidate: candidateSummary,
+      effect,
+      selectionChangeRate,
+      triggerRate,
+      forensicCounts: {
+        trials: transitions.length,
+        triggered: transitions.filter(({ triggered }) => triggered).length,
+        referenceBestMisses: transitions.filter(({ triggered, covered }) => triggered && !covered).length,
+        addedFalsePositives: transitions.filter(({ control: current, candidate: proposed }) => !current && proposed).length,
+        removedFalsePositives: transitions.filter(({ control: current, candidate: proposed }) => current && !proposed).length,
+      },
+    };
     result.gate = candidateGate(positions, candidate.id, result, baseBudget);
     results[candidate.id] = result;
   }
